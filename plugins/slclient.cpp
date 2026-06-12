@@ -143,5 +143,50 @@ FFI_PLUGIN_EXPORT void freePackets(Packets *packets)
 
 FFI_PLUGIN_EXPORT intptr_t getPackets(SEEDLinkConnection *connection, Packets *packets)
 {
-    return -1;
+    if (connection->connection == nullptr || !connection->hasConnection)
+    {
+        std::cerr << "Connection is null" << std::endl;
+        return -1;
+    }
+    if (!connection->isReady)
+    {
+        std::cerr << "Connection not ready" << std::endl;
+        return -1;
+    }
+    // Get a handle on the connection 
+    auto slconn = reinterpret_cast<SLCD *> (connection->connection);
+    // Read as much as we can (or up until the given chunk size)
+    for (int k = 0; k < 256; ++k)
+    {
+        const SLpacketinfo *seedLinkPacketInfo{nullptr};
+        std::array<char, SL_RECV_BUFFER_SIZE> seedLinkBuffer;
+        auto returnValue = sl_collect(slconn, 
+                                      &seedLinkPacketInfo,
+                                      seedLinkBuffer.data(),
+                                      SL_RECV_BUFFER_SIZE);
+        // Data! 
+        if (seedLinkPacketInfo->payloadformat == SLPAYLOAD_MSEED2 ||
+            seedLinkPacketInfo->payloadformat == SLPAYLOAD_MSEED3)
+        {
+            std::cout << "Got data" << std::endl;
+        }
+        else if (returnValue == SLTOOLARGE)
+        {
+            std::cerr << "Internal error: Payload length "
+                      << seedLinkPacketInfo->payloadlength
+                      << " exceeds buffer size " << SL_RECV_BUFFER_SIZE
+                      << std::endl;
+        }
+        else if (returnValue == SLTERMINATE)
+        {
+            std::cerr << "Server issued terminate command - destroy this connection and reconnect" << std::endl;
+            return -2;
+        }
+        else
+        {
+            std::cerr << "Unhandled SEEDLink return value: "
+                      << returnValue << std::endl;
+        }
+    }
+    return 0;
 }
