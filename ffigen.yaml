@@ -1,0 +1,17 @@
+# Run with `dart run ffigen --config ffigen.yaml`.
+name: SlClientBindings
+description: |
+  Bindings for `plugins/slclient.h`.
+
+  Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
+output: 'lib/native/slclient_bindings_generated.dart'
+headers:
+  entry-points:
+    - 'plugins/slclient.h'
+  include-directives:
+    - 'plugins/slclient.h'
+ffi-native:
+  asset-id: 'package:waveform_viewer/native/slclient_bindings_generated.dart'
+comments:
+  style: any
+  length: full
