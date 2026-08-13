@@ -67,7 +67,7 @@ jobs:
         run: |
           ls -l
           ls -l third_party/
-          ls -l third_party/libsmseed/
+          ls -l third_party/libmseed/
           ls -l third_party/libslink/
           dart run ffigen --config ffigen.yaml
           flutter test test/types_test.dart
@@ -142,7 +142,7 @@ jobs:
         run: |
           ls -l
           ls -l third_party/
-          ls -l third_party/libsmseed/
+          ls -l third_party/libmseed/
           ls -l third_party/libslink/
           dart run ffigen --config ffigen.yaml
           flutter test test/types_test.dart
