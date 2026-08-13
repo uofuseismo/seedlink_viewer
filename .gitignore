@@ -2,7 +2,7 @@
 # See https://github.com/flutter/flutter/issues/128635 for more context.
 
 *_generated.dart
-pubspec.lock
+#pubspec.lock
 
 # Miscellaneous
 libmseed.so.3*
