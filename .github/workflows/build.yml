@@ -66,6 +66,7 @@ jobs:
 
       - name: Build Linux
         run: |
+          ls 
           dart run ffigen --config ffigen.yaml
           flutter build linux --release
 
