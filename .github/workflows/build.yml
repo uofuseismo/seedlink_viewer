@@ -32,8 +32,7 @@ jobs:
 
       - name: 🦋 Setup Flutter
         uses: subosito/flutter-action@v2
-        with:
-          channel: { flutter-version: 3.47.0, channel: stable }
+        with: { flutter-version: 3.47.0, channel: stable }
 
       - name: Get os dependencies
         run: |
@@ -64,10 +63,6 @@ jobs:
 
       - name: ✅ Run tests
         run: |
-          ls -l
-          ls -l third_party/
-          ls -l third_party/libmseed/
-          ls -l third_party/libslink/
           dart run ffigen --config ffigen.yaml
           flutter test test/types_test.dart
           flutter test test/slclient_streams_test.dart
@@ -121,8 +116,7 @@ jobs:
 
       - name: 🦋 Setup Flutter
         uses: subosito/flutter-action@v2
-        with:
-          channel: { flutter-version: 3.47.0, channel: stable } 
+        with: { flutter-version: 3.47.0, channel: stable } 
 
       - name: Compile libslink
         run: |
