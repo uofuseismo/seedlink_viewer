@@ -54,8 +54,13 @@ jobs:
       - name: 📥 Get dependencies
         run: flutter pub get
 
+      #- name: ✅ Run tests
+      #  run: flutter test --coverage
+
       - name: ✅ Run tests
-        run: flutter test test/types_test.dart
+        run: |
+          flutter test test/types_test.dart
+          flutter test test/slclient_streams_test.dart
 
       - name: Build Linux
         run: flutter build linux --release
@@ -114,7 +119,9 @@ jobs:
         run: flutter pub get
 
       - name: ✅ Run tests
-        run: flutter test --coverage
+        run: |
+          flutter test test/types_test.dart
+          flutter test test/slclient_streams_test.dart
 
       - name: Build MacOS
         run: flutter build macos --release

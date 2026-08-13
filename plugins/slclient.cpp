@@ -6,6 +6,8 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,6 +21,25 @@
 
 namespace
 {
+
+const std::string CLIENT_NAME{"wave_viewer_client"};
+// TODO should lift this from the package
+const std::string CLIENT_VERSION{"0.0.1"};
+
+/// Applies the connection settings this client always wants.
+void setConnectionOptions(SLCD *slConnection, const bool useTLS)
+{
+    // TODO - have to figure out where cert goes
+    // library appears to check the known players in /etc/ssl/ and /etc/pki/
+    // ENV variables in play: LIBSLINK_TLS_CERT_FILE and LIBSLINK_TLS_CERT_PATH
+    sl_set_tlsmode(slConnection, useTLS ? 1 : 0);
+    // Return quickly if no data
+    constexpr bool nonBlock{true};
+    sl_set_blockingmode(slConnection, nonBlock);
+    // Do not close connection after last packet
+    constexpr bool closeConnection{false};
+    sl_set_dialupmode(slConnection, closeConnection);
+}
 
 /// Splits a string on a delimiter - e.g., the UU_ARUT station identifiers
 /// and 01_H_H_Z stream identifiers that SEEDLink v4 reports.
@@ -38,6 +59,42 @@ std::vector<std::string> split(const std::string &value, const char delimiter)
         start = next + 1;
     }
     return result;
+}
+
+/// Turns a NET.STA.CHAN.LOC stream name into the station identifier and the
+/// selector libslink wants for it.  False indicates the name is unusable.
+bool toStationAndSelector(const std::string &name,
+                          std::string &stationID,
+                          std::string &selector)
+{
+    auto fields = split(name, '.');
+    if (fields.size() < 3 || fields.size() > 4){return false;}
+    const auto &network = fields.at(0);
+    const auto &station = fields.at(1);
+    const auto &channel = fields.at(2);
+    // getStreams writes an absent location code as --
+    auto location = (fields.size() == 4) ? fields.at(3) : std::string{};
+    if (location == "--"){location.clear();}
+    if (network.empty() || station.empty() || channel.size() < 3){return false;}
+    stationID = network + "_" + station;
+    // We only ever want data records
+    const std::string type{".D"};
+    if (channel.size() == 3)
+    {
+        // libslink rewrites v3 selectors (LLCCC.T) into the v4 spelling
+        // (LL_B_S_SS.T) itself, so the v3 form works against either server.
+        // That conversion strips leading - back to an empty location code.
+        selector = (location.empty() ? "--" : location) + channel + type;
+    }
+    else
+    {
+        // Channels that are not the 3 character SEED code have no v3 spelling
+        // so write the v4 band_source_subsource form directly.
+        selector = location + "_" + channel.substr(0, 1)
+                 + "_" + channel.substr(1, 1)
+                 + "_" + channel.substr(2) + type;
+    }
+    return true;
 }
 
 /// Reads a string member from a JSON object and returns an empty string when
@@ -93,6 +150,9 @@ FFI_PLUGIN_EXPORT intptr_t createConnection(
         return -1;
     }
     connection->connection = nullptr;
+    std::memset(connection->host, '\0', HOST_SIZE);
+    connection->port = 0;
+    connection->useTLS = false;
     connection->isReady = false;
     connection->hasConnection = false;
 
@@ -101,38 +161,35 @@ FFI_PLUGIN_EXPORT intptr_t createConnection(
         std::cerr << "Options is null" << std::endl;
         return -1;
     }
+    if (options->host == nullptr)
+    {
+        std::cerr << "Host is null" << std::endl;
+        return -1;
+    }
+    const std::string host{options->host};
+    if (host.size() >= HOST_SIZE)
+    {
+        std::cerr << "Host " << host << " is too long" << std::endl;
+        return -1;
+    }
+    // Remember how we got here so modifySelections can rebuild the connection
+    std::memcpy(connection->host, host.data(), host.size());
+    connection->port = options->port;
+    connection->useTLS = options->useTLS;
 
-    const std::string clientName{"wave_viewer_client"};
-    // TODO should lift this from the package
-    const std::string clientVersion{"0.0.1"};
-    auto slConnection = sl_initslcd(clientName.c_str(),
-                              clientVersion.c_str());
+    auto slConnection = sl_initslcd(CLIENT_NAME.c_str(),
+                                    CLIENT_VERSION.c_str());
     connection->connection = reinterpret_cast<void *> (slConnection);
     connection->hasConnection = true;
- 
-    const auto address = std::string{options->host}
-                       + ":" + std::to_string(options->port);
+
+    const auto address = host + ":" + std::to_string(options->port);
     if (sl_set_serveraddress(slConnection, address.c_str()) != 0)
     {
         std::cerr << "Failed to set seedlink server address to : "
                   << address << std::endl;
         return -1;
     }
-    // TODO - have to figure out where cert goes
-    // library appears to check the known players in /etc/ssl/ and /etc/pki/
-    // ENV variables in play: LIBSLINK_TLS_CERT_FILE and LIBSLINK_TLS_CERT_PATH
-    sl_set_tlsmode(slConnection, false);
-    if (options->useTLS)
-    {
-        constexpr int tlsMode{1};
-        sl_set_tlsmode(slConnection, 1);
-    }
-    // Return quickly if no data
-    constexpr bool nonBlock{true};
-    sl_set_blockingmode(slConnection, nonBlock);
-    // Do not close connection after last packet
-    constexpr bool closeConnection{false};
-    sl_set_dialupmode(slConnection, closeConnection);
+    setConnectionOptions(slConnection, options->useTLS);
     connection->isReady = true;
     return 0;
 }
@@ -183,9 +240,12 @@ FFI_PLUGIN_EXPORT void freeConnection(SEEDLinkConnection *connection)
         if (connection->hasConnection)
         {
             auto slConnection = reinterpret_cast<SLCD *> (connection->connection);
+            // sl_freeslcd releases the memory but leaves the socket open
+            sl_disconnect(slConnection);
             sl_freeslcd(slConnection);
             connection->connection = nullptr;
             connection->hasConnection = false;
+            connection->isReady = false;
         }
     }
 }
@@ -205,6 +265,7 @@ FFI_PLUGIN_EXPORT void freePacket(Packet *packet)
         packet->startTime = 0;
         packet->samplingRate = 0;
         packet->nSamples = 0;
+        packet->sequenceNumber = UNSET_SEQUENCE_NUMBER;
     }
 }
 
@@ -433,7 +494,109 @@ FFI_PLUGIN_EXPORT
     return parseStreamsResponse(payload.c_str(), streams);
 }
 
-FFI_PLUGIN_EXPORT 
+FFI_PLUGIN_EXPORT
+    intptr_t modifySelections(SEEDLinkConnection *connection,
+                              const StreamsList *streams)
+{
+    if (connection == nullptr ||
+        connection->connection == nullptr || !connection->hasConnection)
+    {
+        std::cerr << "Connection is null" << std::endl;
+        return -1;
+    }
+    if (streams == nullptr)
+    {
+        std::cerr << "Streams is null" << std::endl;
+        return -1;
+    }
+    if (streams->nStreams > 0 && streams->streams == nullptr)
+    {
+        std::cerr << "Streams list is null" << std::endl;
+        return -1;
+    }
+    // SEEDLink negotiates one STATION command with a run of SELECT commands
+    // beneath it so the requested channels have to be grouped by station.
+    std::map<std::string, std::set<std::string>> selections;
+    for (int i = 0; i < streams->nStreams; ++i)
+    {
+        if (streams->streams[i] == nullptr){continue;}
+        std::string stationID;
+        std::string selector;
+        if (!toStationAndSelector(streams->streams[i], stationID, selector))
+        {
+            std::cerr << "Skipping unparsable stream name: "
+                      << streams->streams[i] << std::endl;
+            continue;
+        }
+        selections[stationID].insert(selector);
+    }
+
+    auto oldConnection = reinterpret_cast<SLCD *> (connection->connection);
+    // Note where each station had got to so the reconnect picks up where it
+    // left off instead of leaving a hole in the record.  libslink has no
+    // getter for this but the stream list is a documented member.
+    std::map<std::string, uint64_t> sequenceNumbers;
+    for (auto stream = oldConnection->streams; stream != nullptr;
+         stream = stream->next)
+    {
+        sequenceNumbers[stream->stationid] = stream->seqnum;
+    }
+
+    // Build the replacement before retiring the old connection so a failure
+    // here leaves the caller with a connection that still works.
+    auto newConnection = sl_initslcd(CLIENT_NAME.c_str(),
+                                     CLIENT_VERSION.c_str());
+    if (newConnection == nullptr)
+    {
+        std::cerr << "Failed to create the replacement connection" << std::endl;
+        return -1;
+    }
+    const auto address = std::string{connection->host}
+                       + ":" + std::to_string(connection->port);
+    if (sl_set_serveraddress(newConnection, address.c_str()) != 0)
+    {
+        std::cerr << "Failed to set seedlink server address to : "
+                  << address << std::endl;
+        sl_freeslcd(newConnection);
+        return -1;
+    }
+    setConnectionOptions(newConnection, connection->useTLS);
+
+    for (const auto &selection : selections)
+    {
+        const auto &stationID = selection.first;
+        std::string selectors;
+        for (const auto &selector : selection.second)
+        {
+            if (!selectors.empty()){selectors = selectors + " ";}
+            selectors = selectors + selector;
+        }
+        // Stations we were already reading resume from their last sequence
+        // number.  Newly selected ones take whatever the server sends next.
+        uint64_t sequenceNumber{SL_UNSETSEQUENCE};
+        auto found = sequenceNumbers.find(stationID);
+        if (found != sequenceNumbers.end()){sequenceNumber = found->second;}
+        if (sl_add_stream(newConnection, stationID.c_str(), selectors.c_str(),
+                          sequenceNumber, nullptr) != 0)
+        {
+            std::cerr << "Failed to select " << selectors
+                      << " on " << stationID << std::endl;
+            sl_freeslcd(newConnection);
+            return -1;
+        }
+    }
+
+    // The replacement is good so retire the old connection.  The next
+    // getPackets will connect and negotiate the new selection.
+    sl_disconnect(oldConnection);
+    sl_freeslcd(oldConnection);
+    connection->connection = reinterpret_cast<void *> (newConnection);
+    connection->hasConnection = true;
+    connection->isReady = true;
+    return 0;
+}
+
+FFI_PLUGIN_EXPORT
     intptr_t getPackets(SEEDLinkConnection *connection,
                         const int maxPackets,
                         Packets *packets)

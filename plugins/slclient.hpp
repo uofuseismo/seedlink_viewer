@@ -26,6 +26,10 @@ extern "C" {
 #define STATION_SIZE 8
 #define CHANNEL_SIZE 8
 #define LOCATION_SIZE 8
+#define HOST_SIZE 256
+// Matches libslink's SL_UNSETSEQUENCE.  Note dart reads this as -1 because
+// its integers are signed.
+#define UNSET_SEQUENCE_NUMBER UINT64_MAX
 
 typedef struct StreamsList
 {
@@ -50,6 +54,11 @@ typedef struct Packet
     int64_t startTime; // Packet start time in seconds since epoch.
     double samplingRate; // Sampling rate in hz
     int nSamples;      // Number of samples in packet.
+    uint64_t sequenceNumber; // The SEEDLink sequence number of this packet, or
+                             // UNSET_SEQUENCE_NUMBER.  Retaining the last one
+                             // seen for a station lets a rebuilt connection
+                             // resume from that point rather than leaving a
+                             // hole in the record.
 } Packet;
 
 typedef struct Packets
@@ -60,9 +69,12 @@ typedef struct Packets
 
 typedef struct SEEDLinkConnection
 {
-    void *connection;    // Opaque pointer to the SEEDLink connection.
-    bool isReady;        // True indicates the connection is ready to use.
-    bool hasConnection;  // True indicates the connection pointer exists.
+    void *connection;      // Opaque pointer to the SEEDLink connection.
+    char host[HOST_SIZE];  // The server host.  Retained because modifySelections
+    uint16_t port;         // has to build a replacement connection and libslink
+    bool useTLS;           // offers no way to read these back.
+    bool isReady;          // True indicates the connection is ready to use.
+    bool hasConnection;    // True indicates the connection pointer exists.
 } SEEDLinkConnection;
 
 /// Creates the connection from the inpu toptions.
@@ -101,6 +113,33 @@ FFI_PLUGIN_EXPORT
 FFI_PLUGIN_EXPORT
      void freeStreams(StreamsList *streams);
 
+
+/// Sets the streams the server should send on this connection.
+///
+/// SEEDLink only accepts stream selections while a connection is being
+/// negotiated, and libslink only negotiates immediately after connecting -
+/// a selection sent mid-acquisition is ignored by the server.  There is also
+/// no way to drop a station from an existing connection.  This therefore
+/// builds a replacement connection and retires the old one.  The sequence
+/// number each station had reached is carried across so the reconnect
+/// resumes rather than leaving a hole in the record, and stations that were
+/// not previously selected start with whatever the server sends next.
+///
+/// The connection reconnects and renegotiates on the next getPackets call, so
+/// expect a short gap in the data while that happens.  Selections are worth
+/// batching - do not call this once per channel the user clicks.
+///
+/// @param[in,out] connection  On input, the connection to modify.  On exit,
+///                            the connection requests the given streams.
+/// @param[in] streams         The desired streams named NET.STA.CHAN.LOC, as
+///                            produced by getStreams.  Only data records are
+///                            requested.  Names that cannot be parsed are
+///                            skipped.
+/// @result 0 indicates success.  On failure the original connection is left
+///         untouched.
+FFI_PLUGIN_EXPORT
+    intptr_t modifySelections(SEEDLinkConnection *connection,
+                              const StreamsList *streams);
 
 /// Reads packets from a SEEDLink server.
 /// @param[in] connection  A container with the connection information.
