@@ -1,15 +1,22 @@
 # Run with `dart run ffigen --config ffigen.yaml`.
 name: SlClientBindings
 description: |
-  Bindings for `plugins/slclient.h`.
+  Bindings for `plugins/slclient.hpp`.
 
   Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
 output: 'lib/native/slclient_bindings_generated.dart'
 headers:
   entry-points:
-    - 'plugins/slclient.h'
+    - 'plugins/slclient.hpp'
   include-directives:
-    - 'plugins/slclient.h'
+    - '**/plugins/slclient.hpp'
+# The header is named .hpp so the C++ implementation can include it, but clang
+# then parses it as C++ and ffigen does not descend into `extern "C" { ... }`
+# linkage blocks -- every declaration comes out empty. Force C parsing so the
+# `#ifdef __cplusplus` guards drop out and the declarations sit at top level.
+compiler-opts:
+  - '-x'
+  - 'c'
 ffi-native:
   asset-id: 'package:waveform_viewer/native/slclient_bindings_generated.dart'
 comments:

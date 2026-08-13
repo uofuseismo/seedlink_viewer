@@ -70,5 +70,52 @@ void main() {
       expect(idNoLocationCode.locationCode, '');
       expect(idNoLocationCode.toString(), 'PB.B205.EHZ.--');
     });
+
+    test('StreamIdentifier.fromString', () {
+      final id = StreamIdentifier.fromString('UU.ARUT.EHZ.01');
+      expect(id.network, 'UU');
+      expect(id.station, 'ARUT');
+      expect(id.channel, 'EHZ');
+      expect(id.locationCode, '01');
+
+      // -- is how getStreams writes an absent location code
+      final idBlankLocationCode = StreamIdentifier.fromString('PB.B205.EHZ.--');
+      expect(idBlankLocationCode.locationCode, '');
+      final idNoLocationCode = StreamIdentifier.fromString('PB.B205.EHZ');
+      expect(idNoLocationCode.locationCode, '');
+
+      // Round trips through toString
+      for (final name in ['UU.CWU.HHZ.01', 'PB.B205.EHZ.--']) {
+        expect(StreamIdentifier.fromString(name).toString(), name);
+      }
+
+      expect(
+        () => StreamIdentifier.fromString('UU.CWU'),
+        throwsFormatException,
+      );
+      expect(
+        () => StreamIdentifier.fromString('UU.CWU.HHZ.01.extra'),
+        throwsFormatException,
+      );
+    });
+
+    test('StreamIdentifier equality', () {
+      expect(
+        StreamIdentifier.fromString('UU.CWU.HHZ.01'),
+        StreamIdentifier('uu', ' CwU', ' hh z ', '01'),
+      );
+      expect(
+        StreamIdentifier.fromString('UU.CWU.HHZ.01'),
+        isNot(StreamIdentifier.fromString('UU.CWU.HHN.01')),
+      );
+      // A stream list leans on this to deduplicate
+      expect(
+        {
+          StreamIdentifier.fromString('UU.CWU.HHZ.01'),
+          StreamIdentifier.fromString('UU.CWU.HHZ.01'),
+        },
+        hasLength(1),
+      );
+    });
   });
 }

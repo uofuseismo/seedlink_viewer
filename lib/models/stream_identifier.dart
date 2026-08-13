@@ -15,9 +15,45 @@ class StreamIdentifier {
     this.channel = capitalizeAndRemoveBlanks(channel);
     this.locationCode = capitalizeAndRemoveBlanks(locationCode);
   }
+
+  /// Creates an identifier from a NET.STA.CHAN.LOC name of the sort the native
+  /// getStreams call hands back - e.g., UU.ARUT.EHZ.01.  A station with no
+  /// location code is written -- by getStreams but may also simply be omitted.
+  /// This is the inverse of [toString].
+  factory StreamIdentifier.fromString(String name) {
+    final fields = name.split('.');
+    if (fields.length < 3 || fields.length > 4) {
+      throw FormatException(
+        'Cannot parse a stream identifier from "$name"; '
+        'expected NET.STA.CHAN.LOC',
+      );
+    }
+    final locationCode = fields.length == 4 ? fields[3] : '';
+    return StreamIdentifier(
+      fields[0],
+      fields[1],
+      fields[2],
+      locationCode == '--' ? '' : locationCode,
+    );
+  }
+
   @override
   String toString() {
     //final suffix = locationCode.isNotEmpty ? '.$locationCode' : '';
     return '$network.$station.$channel${locationCode.isNotEmpty ? ".$locationCode" : ".--"}';
   }
+
+  /// Two identifiers naming the same stream are the same identifier.  A stream
+  /// list needs this to sort, deduplicate and track selection.
+  @override
+  bool operator ==(Object other) {
+    return other is StreamIdentifier &&
+        other.network == network &&
+        other.station == station &&
+        other.channel == channel &&
+        other.locationCode == locationCode;
+  }
+
+  @override
+  int get hashCode => Object.hash(network, station, channel, locationCode);
 }

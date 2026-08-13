@@ -2,6 +2,8 @@
 # See https://github.com/flutter/flutter/issues/128635 for more context.
 
 # Miscellaneous
+libmseed.so.3*
+libslink.so*
 *.class
 *.lock
 *.log

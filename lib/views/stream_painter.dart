@@ -1,6 +1,6 @@
 import 'dart:async' show Timer;
 import 'dart:ui' as ui_para;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import '../models/data_layer.dart';
 
 class PlotOptions {

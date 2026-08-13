@@ -1,5 +1,5 @@
-#ifndef SLCLIENT_H
-#define SLCLIENT_H
+#ifndef SLCLIENT_HPP
+#define SLCLIENT_HPP
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,16 +27,17 @@ extern "C" {
 #define CHANNEL_SIZE 8
 #define LOCATION_SIZE 8
 
-typedef struct ChannelList
+typedef struct StreamsList
 {
-    char **channels;
-    int nChannels;
-} ChannelList;
+    char **streams;
+    int nStreams;
+} StreamsList;
 
 typedef struct SEEDLinkConnectionOptions
 {
-    char *host;    // null terminated name of host - e.g., localhost
-    uint16_t port; // port number - e.g., 18000
+    char *host;        // null terminated name of host - e.g., localhost
+    uint16_t port;     // Port number - e.g., 18000
+    bool useTLS;       // Use TLS - true indicates using TLS (false for now)
 } SEEDLinkConnectionOptions;
 
 typedef struct Packet
@@ -64,6 +65,7 @@ typedef struct SEEDLinkConnection
     bool hasConnection;  // True indicates the connection pointer exists.
 } SEEDLinkConnection;
 
+/// Creates the connection from the inpu toptions.
 FFI_PLUGIN_EXPORT intptr_t createConnection(const SEEDLinkConnectionOptions *options,
                                             SEEDLinkConnection *result);
 
@@ -74,10 +76,46 @@ FFI_PLUGIN_EXPORT intptr_t createConnection(const SEEDLinkConnectionOptions *opt
 FFI_PLUGIN_EXPORT intptr_t getServerIdentifier(SEEDLinkConnection *connection,
                                                char result[1026]);
 
-FFI_PLUGIN_EXPORT intptr_t getPackets(SEEDLinkConnection *connection, Packets *packets);
+/// Generates a list of currently available streams.
+/// @param[in] connection  Holds the SEEDLink connection.
+/// @param[out] streams    The available streams.  Each stream is named
+///                        NET.STA.CHAN.LOC and an absent location code is
+///                        written as --.  Release this with freeStreams.
+/// @result 0 indicates success.
+FFI_PLUGIN_EXPORT
+    intptr_t getStreams(SEEDLinkConnection *connection, StreamsList *streams);
 
+/// Converts a SEEDLink v4 INFO STREAMS response into a list of stream names.
+/// This is the parsing half of getStreams split out so it can be exercised
+/// against a canned response without touching the network.
+/// @param[in] response  The null terminated JSON payload returned by the
+///                      server for an INFO STREAMS request.
+/// @param[out] streams  The streams named in the response.  See getStreams
+///                      for the naming.  Release this with freeStreams.
+/// @result 0 indicates success.
+FFI_PLUGIN_EXPORT
+    intptr_t parseStreamsResponse(const char *response, StreamsList *streams);
+/// Frees the streams structure.
+/// @param[in,out] streams  On input this is the streams structure to free.
+///                         On exit, the memory on streams has been released.
+FFI_PLUGIN_EXPORT
+     void freeStreams(StreamsList *streams);
+
+
+/// Reads packets from a SEEDLink server.
+/// @param[in] connection  A container with the connection information.
+/// @param[in] maxPackets  We read chunks of packets at a time so we don't
+///                        get stuck indefinitely in this function.  This
+///                        is the maximum number of packets to read.
+/// @param[out] packets    The packets read.
+FFI_PLUGIN_EXPORT intptr_t getPackets(SEEDLinkConnection *connection, int maxPackets, Packets *packets);
+
+/// Frees the packest read from getPackets.
+/// @param[in,out] packets  On input, the packets container to free.
+///                         On exit, the memory on packets has been freed.
 FFI_PLUGIN_EXPORT void freePackets(Packets *packets);
-
+/// Utility to free the memory on an individual packet.  Likely won't be
+/// called from dart.
 FFI_PLUGIN_EXPORT void freePacket(Packet *packet);
 
 FFI_PLUGIN_EXPORT void freeConnection(SEEDLinkConnection *connection);
