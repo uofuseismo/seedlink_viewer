@@ -67,6 +67,8 @@ void main(List<String> args) async {
     }
 
 
+    final boost = Platform.environment['BOOST_INCLUDEDIR'];
+
     // Build slclient.cpp as a shared library linked dynamically against
     // libslink. The $ORIGIN / @loader_path rpath is added automatically by
     // native_toolchain_c so libslclient can find libslink at runtime.
@@ -75,7 +77,10 @@ void main(List<String> args) async {
         name: 'slclient',
         assetName: 'native/slclient_bindings_generated.dart',
         sources: ['plugins/slclient.cpp'],
-        includes: ['third_party/libslink', 'third_party/libmseed'],
+	includes: ['third_party/libslink',
+                   'third_party/libmseed',
+                   if (boost != null) boost,
+                  ],
         std: 'c++20',
         language: Language.cpp,
         libraries: ['slink', 'mseed'],
