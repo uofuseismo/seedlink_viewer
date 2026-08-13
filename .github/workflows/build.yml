@@ -51,6 +51,11 @@ jobs:
         run: |
           cd third_party/libslink
           CC=clang make shared
+
+      - name: Compile libmseed
+        run: |
+          cd third_party/libmseed
+          CC=clang make shared
         
       - name: 📥 Get dependencies
         run: flutter pub get
