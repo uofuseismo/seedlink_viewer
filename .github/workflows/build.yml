@@ -45,6 +45,7 @@ jobs:
           sudo apt-get install -y pkg-config
           sudo apt-get install -y libgtk-3-dev
           sudo apt-get install -y libstdc++-12-dev
+          sudo apt-get install -y --no-install-recommends libboost-dev
 
       - name: Compile libslink
         run: |
@@ -59,11 +60,14 @@ jobs:
 
       - name: ✅ Run tests
         run: |
+          dart run ffigen --config ffigen.yaml
           flutter test test/types_test.dart
           flutter test test/slclient_streams_test.dart
 
       - name: Build Linux
-        run: flutter build linux --release
+        run: |
+          dart run ffigen --config ffigen.yaml
+          flutter build linux --release
 
       - name: 📦 Prepare artifacts
         run: |
@@ -100,6 +104,12 @@ jobs:
           key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: ${{ runner.os }}-pub-
 
+      - name: Get os dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: brew install boost
+
       - name: 🦋 Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -120,11 +130,14 @@ jobs:
 
       - name: ✅ Run tests
         run: |
+          dart run ffigen --config ffigen.yaml
           flutter test test/types_test.dart
           flutter test test/slclient_streams_test.dart
 
       - name: Build MacOS
-        run: flutter build macos --release
+        run: |
+          dart run ffigen --config ffigen.yaml
+          flutter build macos --release
 
       - name: 📦 Prepare artifacts
         run: |
