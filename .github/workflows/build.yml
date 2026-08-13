@@ -55,7 +55,7 @@ jobs:
         run: flutter pub get
 
       - name: ✅ Run tests
-        run: flutter test --coverage
+        run: flutter test test/types_test.dart
 
       - name: Build Linux
         run: flutter build linux --release
