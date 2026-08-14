@@ -130,12 +130,22 @@ jobs:
         uses: subosito/flutter-action@v2
         with: { flutter-version: 3.47.0, channel: stable } 
 
+      # Both libraries are linked with extra Mach-O header space. Flutter's
+      # native asset pipeline rewrites the install name and rpath of these
+      # dylibs when it bundles them into the .app, and a Mach-O can only be
+      # rewritten in place if the header has room for the longer load command.
+      # Without the padding install_name_tool refuses with "larger updated load
+      # commands do not fit (the program must be relinked)".
       - name: Compile libslink
+        env:
+          LDFLAGS: -Wl,-headerpad_max_install_names
         run: |
           cd third_party/libslink
           CC=clang make shared
 
       - name: Compile libmseed
+        env:
+          LDFLAGS: -Wl,-headerpad_max_install_names
         run: |
           cd third_party/libmseed
           CC=clang make shared
