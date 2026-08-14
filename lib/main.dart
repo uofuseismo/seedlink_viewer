@@ -3,10 +3,12 @@ import 'package:material_ui/material_ui.dart';
 import './models/connection_profile.dart';
 import './models/stream_identifier.dart';
 import './services/profile_store.dart';
+import './services/seedlink_packet_reader.dart';
 import './services/seedlink_session.dart';
 import './services/stream_source.dart';
 import './views/app_menu_bar.dart';
 import './views/connection_dialog.dart';
+import './views/multi_stream_painter.dart';
 import './views/stream_painter.dart';
 import './views/stream_selector_dialog.dart';
 //import './native/native_bridge.dart';
@@ -96,10 +98,21 @@ class _WaveformViewerHomeState extends State<WaveformViewerHome> {
   /// The streams to plot, top to bottom.
   var _selected = <StreamIdentifier>[];
 
+  /// Holds the one connection packets are read from.  One reader serves every
+  /// plot: getPackets consumes packets, so a second reader on the same
+  /// connection would take data the plots are waiting for.
+  SeedLinkPacketReader? _reader;
+
   @override
   void initState() {
     super.initState();
     _loadProfiles();
+  }
+
+  @override
+  void dispose() {
+    _reader?.stop();
+    super.dispose();
   }
 
   Future<void> _loadProfiles() async {
@@ -172,6 +185,7 @@ class _WaveformViewerHomeState extends State<WaveformViewerHome> {
       _active = profile;
       _selected = reconciled.kept;
     });
+    await _startReader(profile);
     if (reconciled.droppedAnything) {
       final names = reconciled.dropped.map((s) => '$s').join(', ');
       _report(
@@ -187,10 +201,41 @@ class _WaveformViewerHomeState extends State<WaveformViewerHome> {
     }
   }
 
-  void _disconnect() {
+  /// Opens the connection the plots are fed from.
+  ///
+  /// Skipped when a stream source has been injected, because then there is no
+  /// real server to read from.
+  Future<void> _startReader(ConnectionProfile profile) async {
+    await _reader?.stop();
+    _reader = null;
+    if (widget.streamSourceBuilder != null) {
+      return;
+    }
+    try {
+      final reader = await SeedLinkPacketReader.start(
+        host: profile.host,
+        port: profile.port,
+        useTLS: profile.useTLS,
+        certificatePath: profile.certificatePath,
+        streams: _selected,
+      );
+      if (!mounted) {
+        await reader.stop();
+        return;
+      }
+      setState(() => _reader = reader);
+    } catch (e) {
+      _report('Could not start reading from ${profile.address}: $e',
+          isError: true);
+    }
+  }
+
+  Future<void> _disconnect() async {
+    await _reader?.stop();
     setState(() {
       _active = null;
       _selected = <StreamIdentifier>[];
+      _reader = null;
     });
   }
 
@@ -303,6 +348,9 @@ class _WaveformViewerHomeState extends State<WaveformViewerHome> {
     );
     if (chosen != null && mounted) {
       setState(() => _selected = chosen);
+      // The connection carries a negotiated selection, so it has to be told
+      // as well or the plots would wait on streams nobody asked the server for.
+      _reader?.setStreams(chosen);
       // The selection is saved without ceremony - this is a tool for having a
       // quick look, not one that should ask permission to remember things.
       await _rememberSelection();
@@ -337,53 +385,11 @@ class _WaveformViewerHomeState extends State<WaveformViewerHome> {
   }
 
   Widget _buildPlots() {
-    // Nothing picked yet, so keep showing the simulated traces
-    if (_selected.isEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: List.generate(
-          3,
-          (i) => Expanded(
-            child: StreamPainter(
-              backgroundColor: i % 2 == 0 ? Colors.white : Colors.grey,
-            ),
-          ),
-        ),
-      );
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (var i = 0; i < _selected.length; i++)
-          Expanded(child: _buildPlot(_selected[i], i)),
-      ],
-    );
+    // One reader feeds every plot. Each plot registers for its own stream and
+    // never touches the connection - see MultiStreamPainter.
+    return MultiStreamPainter(streams: _selected, packets: _reader?.packets);
   }
 
-  Widget _buildPlot(StreamIdentifier stream, int index) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // The traces are still simulated - only the layout is driven by the
-        // selection until getPackets is wired up.
-        StreamPainter(
-          backgroundColor: index % 2 == 0 ? Colors.white : Colors.grey,
-        ),
-        Positioned(
-          left: 8,
-          top: 4,
-          child: Text(
-            stream.toString(),
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 class MyHomePage extends StatefulWidget {

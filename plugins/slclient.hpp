@@ -54,6 +54,14 @@ typedef struct SEEDLinkConnectionOptions
     char *host;        // null terminated name of host - e.g., localhost
     uint16_t port;     // Port number - e.g., 18000
     bool useTLS;       // Use TLS - true indicates using TLS (false for now)
+    // Seconds between keepalive heartbeats, or 0 for none.
+    //
+    // libslink disconnects a connection that has been idle for netto seconds
+    // (600 by default) and then waits netdly (30) before reconnecting, so a
+    // long lived acquisition on a quiet channel would drop every ten minutes
+    // and leave a half minute hole.  A heartbeat keeps it up.  Short lived
+    // queries do not need one - they are done in a second.
+    int keepAliveSeconds;
     // Path to the CA certificate to trust, or empty for the system defaults.
     // Only consulted when useTLS is true.
     //
@@ -94,6 +102,7 @@ typedef struct SEEDLinkConnection
     char host[HOST_SIZE];  // The server host.  Retained because modifySelections
     uint16_t port;         // has to build a replacement connection and libslink
     bool useTLS;           // offers no way to read these back.
+    int keepAliveSeconds;  // Kept for the same reason.
     bool isReady;          // True indicates the connection is ready to use.
     bool hasConnection;    // True indicates the connection pointer exists.
 } SEEDLinkConnection;
@@ -116,12 +125,17 @@ FFI_PLUGIN_EXPORT intptr_t getServerIdentifier(SEEDLinkConnection *connection,
 
 /// Generates a list of currently available streams.
 /// @param[in] connection  Holds the SEEDLink connection.
+/// @param[in] timeOutMilliSeconds  Give up if the server has not answered in
+///                        this long.  A busy server with many thousands of
+///                        streams can take a while to compose the reply.
 /// @param[out] streams    The available streams.  Each stream is named
 ///                        NET.STA.CHAN.LOC and an absent location code is
 ///                        written as --.  Release this with freeStreams.
 /// @result 0 indicates success.
 FFI_PLUGIN_EXPORT
-    intptr_t getStreams(SEEDLinkConnection *connection, StreamsList *streams);
+    intptr_t getStreams(SEEDLinkConnection *connection,
+                        int timeOutMilliSeconds,
+                        StreamsList *streams);
 
 /// Converts a SEEDLink v4 INFO STREAMS response into a list of stream names.
 /// This is the parsing half of getStreams split out so it can be exercised

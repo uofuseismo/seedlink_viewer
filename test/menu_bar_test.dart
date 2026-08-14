@@ -41,8 +41,13 @@ Future<MemoryProfileStore> pumpApp(
     MyApp(
       profileStore: store,
       streamSourceBuilder: (_) => FakeSource(serverHas),
-      serverTester: ({required host, required port, useTLS = false}) async =>
-          'TESTSERVER',
+      serverTester:
+          ({
+            required host,
+            required port,
+            useTLS = false,
+            certificatePath = '',
+          }) async => 'TESTSERVER',
     ),
   );
   await tester.pump();

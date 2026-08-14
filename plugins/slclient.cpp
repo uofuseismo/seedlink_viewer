@@ -95,7 +95,9 @@ intptr_t applyCertificatePath(const std::string &certificatePath)
 }
 
 /// Applies the connection settings this client always wants.
-void setConnectionOptions(SLCD *slConnection, const bool useTLS)
+void setConnectionOptions(SLCD *slConnection,
+                          const bool useTLS,
+                          const int keepAliveSeconds)
 {
     // TODO - have to figure out where cert goes
     // library appears to check the known players in /etc/ssl/ and /etc/pki/
@@ -107,6 +109,19 @@ void setConnectionOptions(SLCD *slConnection, const bool useTLS)
     // Do not close connection after last packet
     constexpr bool closeConnection{false};
     sl_set_dialupmode(slConnection, closeConnection);
+    // Off by default in libslink.  Without it an acquisition that goes quiet
+    // is dropped after the idle timeout and leaves a hole in the record.
+    if (keepAliveSeconds > 0)
+    {
+        sl_set_keepalive(slConnection, keepAliveSeconds);
+    }
+    // libslink waits 30 seconds before retrying a failed connection, which is
+    // a long time to stare at an empty plot.  It matters more than it looks:
+    // sockconnect_int treats only EINPROGRESS and EWOULDBLOCK as retryable, so
+    // a connect interrupted by a signal - which happens readily inside a dart
+    // isolate - fails outright and then sits out the whole delay.
+    constexpr int reconnectDelaySeconds{5};
+    sl_set_reconnectdelay(slConnection, reconnectDelaySeconds);
 }
 
 /// Splits a string on a delimiter - e.g., the UU_ARUT station identifiers
@@ -405,6 +420,7 @@ FFI_PLUGIN_EXPORT intptr_t createConnection(
     std::memset(connection->host, '\0', HOST_SIZE);
     connection->port = 0;
     connection->useTLS = false;
+    connection->keepAliveSeconds = 0;
     connection->isReady = false;
     connection->hasConnection = false;
 
@@ -447,6 +463,7 @@ FFI_PLUGIN_EXPORT intptr_t createConnection(
     std::memcpy(connection->host, host.data(), host.size());
     connection->port = options->port;
     connection->useTLS = options->useTLS;
+    connection->keepAliveSeconds = options->keepAliveSeconds;
 
     auto slConnection = sl_initslcd(CLIENT_NAME.c_str(),
                                     CLIENT_VERSION.c_str());
@@ -460,7 +477,8 @@ FFI_PLUGIN_EXPORT intptr_t createConnection(
                   << address << std::endl;
         return -1;
     }
-    setConnectionOptions(slConnection, options->useTLS);
+    setConnectionOptions(slConnection, options->useTLS,
+                         options->keepAliveSeconds);
     connection->isReady = true;
     return 0;
 }
@@ -671,7 +689,9 @@ FFI_PLUGIN_EXPORT
 }
 
 FFI_PLUGIN_EXPORT
-    intptr_t getStreams(SEEDLinkConnection *connection, StreamsList *streams)
+    intptr_t getStreams(SEEDLinkConnection *connection,
+                        const int timeOutMilliSeconds,
+                        StreamsList *streams)
 {
     if (connection == nullptr ||
         connection->connection == nullptr || !connection->hasConnection)
@@ -702,8 +722,9 @@ FFI_PLUGIN_EXPORT
     // sends it.  The connection is non-blocking so sl_collect will report
     // SLNOPACKET until the server gets around to answering; poll until the
     // response shows up or we run out of patience.
-    constexpr auto timeOut = std::chrono::seconds{10};
-    const auto giveUpTime = std::chrono::steady_clock::now() + timeOut;
+    const auto giveUpTime
+        = std::chrono::steady_clock::now()
+        + std::chrono::milliseconds{std::max(timeOutMilliSeconds, 0)};
     std::vector<char> buffer(SL_RECV_BUFFER_SIZE);
     std::string payload;
     bool haveResponse{false};
@@ -834,7 +855,9 @@ FFI_PLUGIN_EXPORT
         sl_freeslcd(newConnection);
         return -1;
     }
-    setConnectionOptions(newConnection, connection->useTLS);
+    // The rebuilt connection has to keep beating too
+    setConnectionOptions(newConnection, connection->useTLS,
+                         connection->keepAliveSeconds);
 
     for (const auto &selection : selections)
     {

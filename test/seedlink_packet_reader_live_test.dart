@@ -67,40 +67,55 @@ void main() {
   test('retargeting mid-flight switches which streams arrive', () async {
     const source = SeedLinkStreamSource(host: 'localhost', port: 18000);
     final offered = await source.fetchStreams();
-    final vertical = offered.where((s) => s.channel == 'HHZ').toList();
-    expect(vertical.length, greaterThanOrEqualTo(2));
+    // A stream being offered does not mean it is still producing - the list
+    // includes stations that went quiet hours ago - so which ones are live has
+    // to be discovered by listening rather than assumed from the list.
+    final candidates = offered
+        .where((s) => s.channel == 'HHZ')
+        .take(8)
+        .toList();
+    expect(candidates.length, greaterThanOrEqualTo(2));
 
     final reader = await SeedLinkPacketReader.start(
       host: 'localhost',
       port: 18000,
-      streams: [vertical.first],
+      streams: candidates,
     );
 
-    final seen = <StreamIdentifier>{};
+    var seen = <StreamIdentifier>{};
     final subscription = reader.packets.listen((p) => seen.add(p.identifier));
 
-    Future<void> waitFor(StreamIdentifier wanted) async {
-      final giveUp = DateTime.now().add(const Duration(seconds: 30));
-      while (!seen.contains(wanted) && DateTime.now().isBefore(giveUp)) {
+    Future<void> waitUntil(bool Function() done, Duration limit) async {
+      final giveUp = DateTime.now().add(limit);
+      while (!done() && DateTime.now().isBefore(giveUp)) {
         await Future<void>.delayed(const Duration(milliseconds: 200));
       }
     }
 
-    await waitFor(vertical.first);
-    expect(seen, contains(vertical.first));
+    // Find two stations that are actually sending right now
+    await waitUntil(() => seen.length >= 2, const Duration(seconds: 40));
+    final live = seen.toList();
+    expect(
+      live.length,
+      greaterThanOrEqualTo(2),
+      reason: 'fewer than two of $candidates are currently producing',
+    );
 
-    // Now ask for a different station and check it turns up
-    seen.clear();
-    reader.setStreams([vertical[1]]);
-    await waitFor(vertical[1]);
+    // Narrow to just one of them
+    final keep = live[1];
+    seen = <StreamIdentifier>{};
+    reader.setStreams([keep]);
+    await waitUntil(() => seen.contains(keep), const Duration(seconds: 40));
+    expect(seen, contains(keep), reason: 'the new selection never arrived');
+
+    // ... and once it has settled, nothing else should still be coming
+    seen = <StreamIdentifier>{};
+    await Future<void>.delayed(const Duration(seconds: 5));
+    final strays = seen.difference({keep});
 
     await subscription.cancel();
     await reader.stop();
 
-    expect(
-      seen,
-      contains(vertical[1]),
-      reason: 'the new selection never arrived',
-    );
-  }, timeout: const Timeout(Duration(seconds: 120)));
+    expect(strays, isEmpty, reason: 'dropped streams are still arriving');
+  }, timeout: const Timeout(Duration(seconds: 150)));
 }

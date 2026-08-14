@@ -50,11 +50,17 @@ class SeedLinkStreamSource implements StreamSource {
   /// A CA certificate directory or bundle, or empty for the system store.
   final String certificatePath;
 
+  /// How long to wait for the server's stream list.  Generous by default: a
+  /// server carrying thousands of streams takes a while to compose the reply,
+  /// and a busy one takes longer still.
+  final Duration timeout;
+
   const SeedLinkStreamSource({
     required this.host,
     required this.port,
     this.useTLS = false,
     this.certificatePath = '',
+    this.timeout = const Duration(seconds: 30),
   });
 
   @override
@@ -66,8 +72,9 @@ class SeedLinkStreamSource implements StreamSource {
     final port = this.port;
     final useTLS = this.useTLS;
     final certificatePath = this.certificatePath;
+    final timeoutMs = timeout.inMilliseconds;
     return Isolate.run(
-      () => _fetchStreams(host, port, useTLS, certificatePath),
+      () => _fetchStreams(host, port, useTLS, certificatePath, timeoutMs),
     );
   }
 }
@@ -77,11 +84,12 @@ List<StreamIdentifier> _fetchStreams(
   int port,
   bool useTLS,
   String certificatePath,
+  int timeoutMs,
 ) {
   return _withConnection(host, port, useTLS, certificatePath, (connection) {
     return using((arena) {
       final streams = arena<native.StreamsList>();
-      final code = native.getStreams(connection, streams);
+      final code = native.getStreams(connection, timeoutMs, streams);
       if (code != 0) {
         throw StreamSourceException(
           'Could not read the stream list from $host:$port (error $code)',
@@ -104,7 +112,7 @@ List<StreamIdentifier> _fetchStreams(
 /// Copies the certificate path into the fixed width field the native side
 /// expects.  An empty path is left as the zeroes the arena already wrote,
 /// which the native side reads as "use the system certificates".
-void _writeCertificatePath(
+void writeCertificatePath(
   Pointer<native.SEEDLinkConnectionOptions> options,
   String certificatePath,
 ) {
@@ -134,14 +142,18 @@ T _withConnection<T>(
   int port,
   bool useTLS,
   String certificatePath,
-  T Function(Pointer<native.SEEDLinkConnection>) body,
-) {
+  T Function(Pointer<native.SEEDLinkConnection>) body, {
+  /// Queries here are done in a second, so they need no heartbeat.  A long
+  /// lived acquisition does - see SeedLinkPacketReader.
+  int keepAliveSeconds = 0,
+}) {
   return using((arena) {
     final options = arena<native.SEEDLinkConnectionOptions>();
     options.ref.host = host.toNativeUtf8(allocator: arena).cast<Char>();
     options.ref.port = port;
     options.ref.useTLS = useTLS;
-    _writeCertificatePath(options, certificatePath);
+    options.ref.keepAliveSeconds = keepAliveSeconds;
+    writeCertificatePath(options, certificatePath);
 
     final connection = arena<native.SEEDLinkConnection>();
     final code = native.createConnection(options, connection);

@@ -2,6 +2,7 @@ import 'dart:async' show Timer;
 import 'dart:ui' as ui_para;
 import 'package:material_ui/material_ui.dart';
 import '../models/data_layer.dart';
+import './stream_registry.dart';
 
 class PlotOptions {
   final Color backgroundColor;
@@ -22,9 +23,33 @@ class PlotOptions {
 
 }
 
+/// Plots one stream.
+///
+/// Deliberately knows nothing about connections. Packets are pushed to it by
+/// whoever owns the connection - see MultiStreamPainter - because getPackets
+/// consumes packets from the connection, so a plot that fetched for itself
+/// would take data belonging to the other plots.
+///
+/// With no [identifier] and [registry] it invents its own trace, which is
+/// useful for working on the plotting with no server to hand.
 class StreamPainter extends StatefulWidget {
   final Color backgroundColor;
-  const StreamPainter({super.key, this.backgroundColor = Colors.white});
+
+  /// The stream this plot is showing.
+  final StreamIdentifier? identifier;
+
+  /// Where to register for that stream's packets.
+  final StreamRegistry? registry;
+
+  const StreamPainter({
+    super.key,
+    this.backgroundColor = Colors.white,
+    this.identifier,
+    this.registry,
+  });
+
+  /// True when packets are pushed in rather than invented.
+  bool get isLive => identifier != null && registry != null;
 
   @override
   State createState() => _StreamPainterState();
@@ -34,6 +59,8 @@ class _StreamPainterState extends State<StreamPainter> {
   static const _redrawInterval = Duration(seconds: 3);
 
   late PlotOptions mPlotOptions;
+
+  /// The rolling window of samples this plot is drawing.
   late Stream mStream;
   Timer? _redrawTimer;
 
@@ -41,19 +68,65 @@ class _StreamPainterState extends State<StreamPainter> {
   void initState() {
     super.initState();
     mPlotOptions = PlotOptions(backgroundColor: widget.backgroundColor);
-    mStream = createRandomStream();
-    _redrawTimer = Timer.periodic(_redrawInterval, (_) {
-      final startTimeMuS = DateTime.now().microsecondsSinceEpoch
-          - _redrawInterval.inMicroseconds;
-      final packet = createNextPacket(startTimeMuS, 100.0,
-          _redrawInterval.inMicroseconds);
+    _start();
+  }
+
+  @override
+  void didUpdateWidget(StreamPainter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.identifier?.toString() != widget.identifier?.toString() ||
+        oldWidget.registry != widget.registry) {
+      _stop(oldWidget);
+      _start();
+    }
+  }
+
+  void _start() {
+    final identifier = widget.identifier;
+    final registry = widget.registry;
+    if (widget.isLive) {
+      mStream = Stream(identifier!, <Packet>[]);
+      registry!.register(identifier, _onPacket);
+      // The plot window is always the last couple of minutes, so it has to be
+      // redrawn as time passes even when nothing new has arrived.
+      _redrawTimer = Timer.periodic(_redrawInterval, (_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+    } else {
+      mStream = createRandomStream();
+      _redrawTimer = Timer.periodic(_redrawInterval, (_) {
+        final startTimeMuS = DateTime.now().microsecondsSinceEpoch
+            - _redrawInterval.inMicroseconds;
+        final packet = createNextPacket(startTimeMuS, 100.0,
+            _redrawInterval.inMicroseconds);
+        if (mounted) {
+          setState(() => mStream.addPacket(packet));
+        }
+      });
+    }
+  }
+
+  void _stop(StreamPainter configuration) {
+    _redrawTimer?.cancel();
+    _redrawTimer = null;
+    if (configuration.isLive) {
+      configuration.registry!.unregister(configuration.identifier!, _onPacket);
+    }
+  }
+
+  /// A packet arrived for this stream.  Stream.addPacket keeps the rolling
+  /// window trimmed, so this does not grow without bound.
+  void _onPacket(Packet packet) {
+    if (mounted) {
       setState(() => mStream.addPacket(packet));
-    });
+    }
   }
 
   @override
   void dispose() {
-    _redrawTimer?.cancel();
+    _stop(widget);
     super.dispose();
   }
 

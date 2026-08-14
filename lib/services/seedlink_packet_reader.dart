@@ -132,6 +132,9 @@ class SeedLinkPacketReader {
     String certificatePath = '',
     List<StreamIdentifier> streams = const <StreamIdentifier>[],
     Duration pollInterval = const Duration(milliseconds: 200),
+    /// Heartbeat interval.  libslink drops a connection idle for ten minutes,
+    /// which a quiet station would otherwise hit routinely.
+    Duration keepAlive = const Duration(seconds: 30),
   }) async {
     final incoming = ReceivePort();
     final isolate = await Isolate.spawn(
@@ -144,6 +147,7 @@ class SeedLinkPacketReader {
         certificatePath: certificatePath,
         streams: streams.map((s) => s.toString()).toList(),
         pollIntervalMs: pollInterval.inMilliseconds,
+        keepAliveSeconds: keepAlive.inSeconds,
       ),
       debugName: 'seedlink-$host:$port',
     );
@@ -210,6 +214,7 @@ class _Startup {
   final String certificatePath;
   final List<String> streams;
   final int pollIntervalMs;
+  final int keepAliveSeconds;
 
   const _Startup({
     required this.reply,
@@ -219,6 +224,7 @@ class _Startup {
     required this.certificatePath,
     required this.streams,
     required this.pollIntervalMs,
+    required this.keepAliveSeconds,
   });
 }
 
@@ -259,6 +265,9 @@ Future<void> _run(_Startup startup) async {
     options.ref.host = startup.host.toNativeUtf8(allocator: arena).cast<Char>();
     options.ref.port = startup.port;
     options.ref.useTLS = startup.useTLS;
+    // This connection is held open for as long as the user is watching, so it
+    // needs a heartbeat to survive quiet spells.
+    options.ref.keepAliveSeconds = startup.keepAliveSeconds;
     writeCertificatePath(options, startup.certificatePath);
 
     while (!stopping) {
