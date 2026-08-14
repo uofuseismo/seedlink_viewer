@@ -5,6 +5,8 @@ import 'package:waveform_viewer/models/connection_profile.dart';
 import 'package:waveform_viewer/models/stream_identifier.dart';
 import 'package:waveform_viewer/services/profile_store.dart';
 import 'package:waveform_viewer/services/stream_source.dart';
+import 'package:waveform_viewer/views/stream_painter.dart';
+import 'package:waveform_viewer/views/welcome_view.dart';
 
 /// A source that answers with whatever the test says the server has.
 class FakeSource implements StreamSource {
@@ -86,6 +88,67 @@ void main() {
       await pumpApp(tester);
       await openMenu(tester, 'File');
       expect(find.text('Exit', findRichText: true), findsOneWidget);
+    });
+  });
+
+  group('on startup', () {
+    testWidgets('invites a connection rather than inventing data', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+
+      expect(find.byType(WelcomeView), findsOneWidget);
+      expect(find.text('Waveform Viewer'), findsOneWidget);
+      expect(find.textContaining('Connect to a SEEDLink server'), findsOneWidget);
+      // A trace moving across the screen with no connection reads as live data
+      expect(find.byType(StreamPainter), findsNothing);
+    });
+
+    testWidgets('offers a shortcut to making one', (tester) async {
+      await pumpApp(tester);
+      expect(
+        find.widgetWithText(FilledButton, 'New connection...'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('once connected, asks which streams to plot', (tester) async {
+      await pumpApp(
+        tester,
+        profiles: [profile('Utah')],
+        serverHas: ['UU.ARUT.EHZ.01'],
+      );
+      await openMenu(tester, 'Connection');
+      await tester.tap(find.text('Connect', findRichText: true));
+      await tester.pump();
+      await tester.tap(find.text('Utah'));
+      await tester.pump();
+      await tester.pump();
+
+      // Connected, but nothing chosen yet - so say so rather than sit blank
+      expect(find.byType(WelcomeView), findsOneWidget);
+      expect(find.textContaining('Choose which streams'), findsOneWidget);
+      expect(find.textContaining('Utah'), findsWidgets);
+      expect(find.byType(StreamPainter), findsNothing);
+    });
+
+    testWidgets('plots appear once streams are selected', (tester) async {
+      await pumpApp(
+        tester,
+        profiles: [
+          profile('Utah', streams: ['UU.ARUT.EHZ.01', 'UU.BGU.HHZ.01']),
+        ],
+        serverHas: ['UU.ARUT.EHZ.01', 'UU.BGU.HHZ.01'],
+      );
+      await openMenu(tester, 'Connection');
+      await tester.tap(find.text('Connect', findRichText: true));
+      await tester.pump();
+      await tester.tap(find.text('Utah'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(WelcomeView), findsNothing);
+      expect(find.byType(StreamPainter), findsNWidgets(2));
     });
   });
 

@@ -54,20 +54,32 @@ class Stream {
     }
   }
 
+  /// The smallest and largest sample in a time window.
+  ///
+  /// Seeded from the data rather than from zero.  Seismic counts sit on a DC
+  /// offset - a channel resting around 30000 never goes near zero - so
+  /// starting at zero stretched the range from zero up to the trace and
+  /// squashed the signal into a sliver at the edge of the plot.
+  ///
+  /// A window with no samples in it reports a flat zero range; callers have to
+  /// cope with that anyway for a stream that has not received anything yet.
   Float64x2 getMinimumAndMaximumInTimeRange(int t0MuS, int t1MuS) {
-    double minValue = 0; 
-    double maxValue = 0;
+    double? minValue;
+    double? maxValue;
     for (var packet in packets) {
       try {
          var pMinMax = packet.getMinimumAndMaximumInTimeRange(t0MuS, t1MuS);
          if (pMinMax != null) {
-           minValue = min(minValue, pMinMax.x);
-           maxValue = max(maxValue, pMinMax.y);
+           minValue = (minValue == null) ? pMinMax.x : min(minValue, pMinMax.x);
+           maxValue = (maxValue == null) ? pMinMax.y : max(maxValue, pMinMax.y);
          }
       }
       catch (e) {
         print('$e');
       }
+    }
+    if (minValue == null || maxValue == null) {
+      return Float64x2(0, 0);
     }
     return Float64x2(minValue, maxValue);
   }

@@ -2,6 +2,7 @@ import 'dart:async' show Timer;
 import 'dart:ui' as ui_para;
 import 'package:material_ui/material_ui.dart';
 import '../models/data_layer.dart';
+import '../models/plot_timing.dart';
 import './stream_registry.dart';
 
 class PlotOptions {
@@ -41,11 +42,16 @@ class StreamPainter extends StatefulWidget {
   /// Where to register for that stream's packets.
   final StreamRegistry? registry;
 
+  /// Every duration this plot runs on.  Set by the container so all the
+  /// traces agree, and so one setting can change them together.
+  final PlotTiming timing;
+
   const StreamPainter({
     super.key,
     this.backgroundColor = Colors.white,
     this.identifier,
     this.registry,
+    this.timing = const PlotTiming(),
   });
 
   /// True when packets are pushed in rather than invented.
@@ -56,8 +62,6 @@ class StreamPainter extends StatefulWidget {
 }
 
 class _StreamPainterState extends State<StreamPainter> {
-  static const _redrawInterval = Duration(seconds: 3);
-
   late PlotOptions mPlotOptions;
 
   /// The rolling window of samples this plot is drawing.
@@ -67,15 +71,25 @@ class _StreamPainterState extends State<StreamPainter> {
   @override
   void initState() {
     super.initState();
-    mPlotOptions = PlotOptions(backgroundColor: widget.backgroundColor);
+    mPlotOptions = PlotOptions(
+      backgroundColor: widget.backgroundColor,
+      plotDuration: widget.timing.window,
+    );
     _start();
   }
 
   @override
   void didUpdateWidget(StreamPainter oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.timing != widget.timing) {
+      mPlotOptions = PlotOptions(
+        backgroundColor: widget.backgroundColor,
+        plotDuration: widget.timing.window,
+      );
+    }
     if (oldWidget.identifier?.toString() != widget.identifier?.toString() ||
-        oldWidget.registry != widget.registry) {
+        oldWidget.registry != widget.registry ||
+        oldWidget.timing.redrawInterval != widget.timing.redrawInterval) {
       _stop(oldWidget);
       _start();
     }
@@ -89,20 +103,25 @@ class _StreamPainterState extends State<StreamPainter> {
       registry!.register(identifier, _onPacket);
       // The plot window is always the last couple of minutes, so it has to be
       // redrawn as time passes even when nothing new has arrived.
-      _redrawTimer = Timer.periodic(_redrawInterval, (_) {
+      _redrawTimer = Timer.periodic(widget.timing.redrawInterval, (_) {
         if (mounted) {
           setState(() {});
         }
       });
     } else {
       mStream = createRandomStream();
-      _redrawTimer = Timer.periodic(_redrawInterval, (_) {
+      _redrawTimer = Timer.periodic(widget.timing.redrawInterval, (_) {
         final startTimeMuS = DateTime.now().microsecondsSinceEpoch
-            - _redrawInterval.inMicroseconds;
+            - widget.timing.redrawInterval.inMicroseconds;
         final packet = createNextPacket(startTimeMuS, 100.0,
-            _redrawInterval.inMicroseconds);
+            widget.timing.redrawInterval.inMicroseconds);
         if (mounted) {
-          setState(() => mStream.addPacket(packet));
+          setState(
+            () => mStream.addPacket(
+              packet,
+              maxHistoryMuS: widget.timing.history.inMicroseconds,
+            ),
+          );
         }
       });
     }
@@ -120,7 +139,14 @@ class _StreamPainterState extends State<StreamPainter> {
   /// window trimmed, so this does not grow without bound.
   void _onPacket(Packet packet) {
     if (mounted) {
-      setState(() => mStream.addPacket(packet));
+      // The buffer length comes from the same place as the window, so it can
+      // never end up trimming the trace before the window does.
+      setState(
+        () => mStream.addPacket(
+          packet,
+          maxHistoryMuS: widget.timing.history.inMicroseconds,
+        ),
+      );
     }
   }
 
@@ -151,6 +177,10 @@ class _StreamPainter extends CustomPainter {
   late double _transformSpaceToTimeInMicroseconds;
   late double _transformTimeInMicroSecondsToSpace;
   late double _transformDataToGrid;
+
+  /// The middle of the visible data.  Subtracted before scaling so a trace
+  /// with a DC offset lands in the plot rather than above it.
+  late double _dataCentre;
 
   _StreamPainter(this.mPlotOptions, this._mStream);
 
@@ -189,13 +219,22 @@ class _StreamPainter extends CustomPainter {
     _plotEndTime
       = DateTime.fromMicrosecondsSinceEpoch(_plotEndTimeInMicroSeconds);
 
+    // Rescale to whatever is actually in the window.  A station resting on a
+    // large DC offset needs the trace centred on its own midpoint, not on
+    // zero, or it is drawn clean off the top of the plot.
     var minMaxData
      = _mStream.getMinimumAndMaximumInTimeRange(_plotStartTimeInMicroSeconds,
                                                 _plotEndTimeInMicroSeconds);
-    print(minMaxData);
     double dataRange = minMaxData.y - minMaxData.x;
-    if (dataRange != 0) {
+    _dataCentre = 0.5*(minMaxData.y + minMaxData.x);
+    if (dataRange > 0) {
       _transformDataToGrid = height/dataRange;
+    }
+    else {
+      // Nothing yet, or a dead flat channel.  Draw it down the middle rather
+      // than dividing by zero - and note this used to be left unset, which
+      // threw inside paint and blanked the whole plot.
+      _transformDataToGrid = 0;
     }
 
     // Draw the background
@@ -342,8 +381,10 @@ class _StreamPainter extends CustomPainter {
       var t1 = t0 + packet.samplingPeriodInMicroSeconds;
       double x0 = timeInMicroSecondsToX(t0); 
       double x1 = timeInMicroSecondsToX(t1);
-      double v0 = packet.data[i];
-      double v1 = packet.data[i + 1];
+      // Centred on the visible midpoint: the raw counts are nowhere near zero
+      // and drawing them unshifted puts the trace off the top of the plot.
+      double v0 = packet.data[i] - _dataCentre;
+      double v1 = packet.data[i + 1] - _dataCentre;
       double y0 = halfHeight - v0*transformScalar;
       double y1 = halfHeight - v1*transformScalar;
       //double y0 = 50 - packet.data[i]/2;

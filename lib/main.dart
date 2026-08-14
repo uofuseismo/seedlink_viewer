@@ -1,6 +1,7 @@
 import 'dart:io' show exit;
 import 'package:material_ui/material_ui.dart';
 import './models/connection_profile.dart';
+import './models/plot_timing.dart';
 import './models/stream_identifier.dart';
 import './services/profile_store.dart';
 import './services/seedlink_packet_reader.dart';
@@ -11,6 +12,7 @@ import './views/connection_dialog.dart';
 import './views/multi_stream_painter.dart';
 import './views/stream_painter.dart';
 import './views/stream_selector_dialog.dart';
+import './views/welcome_view.dart';
 //import './native/native_bridge.dart';
 
 
@@ -97,6 +99,11 @@ class _WaveformViewerHomeState extends State<WaveformViewerHome> {
 
   /// The streams to plot, top to bottom.
   var _selected = <StreamIdentifier>[];
+
+  /// Every duration the plots run on.  Owned here, at the top, so that when
+  /// the window becomes configurable there is one thing to change and the
+  /// whole stack below stays consistent with it.
+  final PlotTiming _timing = const PlotTiming();
 
   /// Holds the one connection packets are read from.  One reader serves every
   /// plot: getPackets consumes packets, so a second reader on the same
@@ -385,9 +392,31 @@ class _WaveformViewerHomeState extends State<WaveformViewerHome> {
   }
 
   Widget _buildPlots() {
+    // Nothing is plotted until there is something real to plot. Inventing a
+    // trace to fill the window reads as live data and is disorienting before
+    // any server has been connected to.
+    if (_active == null) {
+      return WelcomeView(
+        message: 'Connect to a SEEDLink server to start plotting.',
+        actionLabel: 'New connection...',
+        onAction: _createConnection,
+      );
+    }
+    if (_selected.isEmpty) {
+      return WelcomeView(
+        message: 'Connected to ${_active!.name} (${_active!.address}).\n'
+            'Choose which streams to plot.',
+        actionLabel: 'Stream selector...',
+        onAction: _showStreamSelector,
+      );
+    }
     // One reader feeds every plot. Each plot registers for its own stream and
     // never touches the connection - see MultiStreamPainter.
-    return MultiStreamPainter(streams: _selected, packets: _reader?.packets);
+    return MultiStreamPainter(
+      streams: _selected,
+      packets: _reader?.packets,
+      timing: _timing,
+    );
   }
 
 }

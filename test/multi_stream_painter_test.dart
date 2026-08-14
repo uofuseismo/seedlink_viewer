@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:waveform_viewer/models/packet.dart';
+import 'package:waveform_viewer/models/plot_timing.dart';
 import 'package:waveform_viewer/models/stream_identifier.dart';
 import 'package:waveform_viewer/services/seedlink_packet_reader.dart';
 import 'package:waveform_viewer/views/multi_stream_painter.dart';
@@ -80,6 +81,41 @@ void main() {
     });
   });
 
+  group('the plot window', () {
+    const oneSecond = 1000000;
+    const timing = PlotTiming(window: Duration(minutes: 2));
+    final now = DateTime.now();
+
+    Packet at(int offsetSeconds) => Packet(
+      now.microsecondsSinceEpoch + offsetSeconds * oneSecond,
+      100.0,
+      Float64List.fromList(const [1.0, 2.0, 3.0]),
+    );
+
+    bool visible(Packet packet) =>
+        isWithinPlotWindow(packet, timing: timing, now: now);
+
+    test('keeps what is on screen', () {
+      expect(visible(at(-30)), isTrue);
+      expect(visible(at(-1)), isTrue);
+      expect(visible(at(-119)), isTrue);
+    });
+
+    test('drops what has scrolled off the left hand edge', () {
+      // A backlog replayed after a reconnect looks like this
+      expect(visible(at(-600)), isFalse);
+    });
+
+    test('drops something timestamped absurdly far ahead', () {
+      expect(visible(at(3600)), isFalse);
+    });
+
+    test('tolerates a little clock skew', () {
+      // Clocks never quite agree, and this is good data
+      expect(visible(at(5)), isTrue);
+    });
+  });
+
   group('MultiStreamPainter', () {
     testWidgets('gives every selected stream a plot', (tester) async {
       await tester.pumpWidget(
@@ -149,9 +185,7 @@ void main() {
       expect(after.last, same(before.first));
     });
 
-    testWidgets('falls back to simulated traces with nothing selected', (
-      tester,
-    ) async {
+    testWidgets('draws nothing at all with nothing selected', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -161,11 +195,9 @@ void main() {
       );
       await tester.pump();
 
-      final painters = tester.widgetList<StreamPainter>(
-        find.byType(StreamPainter),
-      );
-      expect(painters, hasLength(3));
-      expect(painters.every((p) => p.isLive), isFalse);
+      // Emphatically not invented traces: a moving trace reads as live data,
+      // and whoever owns this decides what to show in its place.
+      expect(find.byType(StreamPainter), findsNothing);
     });
 
     testWidgets('routes arriving packets to the right plot', (tester) async {
