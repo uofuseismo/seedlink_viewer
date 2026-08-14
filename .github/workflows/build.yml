@@ -81,14 +81,22 @@ jobs:
           mkdir -p artifacts
           # The executable cannot run on its own - it needs the sibling lib/
           # and data/ directories - so ship the whole bundle as one archive.
+          # Rename the bundle first so the archive has a waveform_viewer/ root
+          # and unpacks into one directory instead of scattering lib/, data/
+          # and the executable across the current directory.
+          mv build/linux/x64/release/bundle build/linux/x64/release/waveform_viewer
           tar -czf artifacts/waveform_viewer-linux-x64.tar.gz \
-            -C build/linux/x64/release/bundle .
+            -C build/linux/x64/release waveform_viewer
 
       - name: Upload Ubuntu artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: artifacts-ubuntu-x64
-          path: artifacts
+          name: waveform_viewer-linux-x64
+          path: artifacts/waveform_viewer-linux-x64.tar.gz
+          # Upload the tarball as-is. The default wraps whatever it is given in
+          # a zip, which would mean unzipping to get at the .tar.gz. Only a
+          # single file may be uploaded when this is false.
+          archive: false
 
       # ─────────────── ONLY ON TAGS ───────────────
       - name: 🏷️ Create or update Release
@@ -196,8 +204,10 @@ jobs:
       - name: Upload MacOS ARM artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: artifacts-macos-arm
-          path: artifacts
+          name: waveform_viewer-macos-arm64
+          path: artifacts/waveform_viewer-macos-arm64.zip
+          # As on linux - upload the archive as-is rather than zipping the zip
+          archive: false
 
       # ─────────────── ONLY ON TAGS ───────────────
       - name: 🏷️ Create or update Release
