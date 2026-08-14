@@ -17,7 +17,14 @@ concurrency:
 
 jobs:
   build_and_release_linux:
-    runs-on: ubuntu-latest
+    name: linux (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One runner failing should not hide the results from the others -
+      # ubuntu-26.04 is a preview image and can break independently of us.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
 
     steps:
       - name: 📂 Checkout code
@@ -27,8 +34,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
-          restore-keys: ${{ runner.os }}-pub-
+          key: ${{ matrix.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: ${{ matrix.os }}-pub-
 
       - name: 🦋 Setup Flutter
         uses: subosito/flutter-action@v2
@@ -42,7 +49,11 @@ jobs:
           sudo apt-get install -y ninja-build
           sudo apt-get install -y pkg-config
           sudo apt-get install -y libgtk-3-dev
-          sudo apt-get install -y libstdc++-12-dev
+          # g++ pulls whichever libstdc++ headers this release defaults to,
+          # which clang then finds. The pinned version below does not exist on
+          # every ubuntu, so it is best effort on top.
+          sudo apt-get install -y g++
+          sudo apt-get install -y libstdc++-12-dev || true
           sudo apt-get install -y --no-install-recommends libboost-dev
 
       - name: Compile libslink
@@ -83,34 +94,27 @@ jobs:
           # and unpacks into one directory instead of scattering lib/, data/
           # and the executable across the current directory.
           mv build/linux/x64/release/bundle build/linux/x64/release/waveform_viewer
-          tar -czf artifacts/waveform_viewer-linux-x64.tar.gz \
+          tar -czf artifacts/waveform_viewer-${{ matrix.os }}-x64.tar.gz \
             -C build/linux/x64/release waveform_viewer
 
       - name: Upload Ubuntu artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: waveform_viewer-linux-x64
-          path: artifacts/waveform_viewer-linux-x64.tar.gz
+          name: waveform_viewer-${{ matrix.os }}-x64
+          path: artifacts/waveform_viewer-${{ matrix.os }}-x64.tar.gz
           # Upload the tarball as-is. The default wraps whatever it is given in
           # a zip, which would mean unzipping to get at the .tar.gz. Only a
           # single file may be uploaded when this is false.
           archive: false
-
-      # ─────────────── ONLY ON TAGS ───────────────
-      - name: 🏷️ Create or update Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: ncipollo/release-action@v1
-        with:
-          tag:       ${{ github.ref_name }}
-          name:      Release ${{ github.ref_name }}
-          # A workspace path, not the upload-artifact name above
-          artifacts: artifacts/waveform_viewer-linux-x64.tar.gz
-          # The macos job attaches to this same release
-          allowUpdates: true
-          token:     ${{ secrets.GITHUB_TOKEN }}
  
-  build_and_release_macos: 
-    runs-on: macos-latest
+  build_and_release_macos:
+    name: macos (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both of these are arm64 runners, which is what we ship
+        os: [macos-15, macos-26]
 
     steps:
       - name: 📂 Checkout code
@@ -120,8 +124,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
-          restore-keys: ${{ runner.os }}-pub-
+          key: ${{ matrix.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: ${{ matrix.os }}-pub-
 
       - name: Get os dependencies
         env:
@@ -193,25 +197,46 @@ jobs:
           # ditto rather than zip: a .app is a directory whose symlinks, and
           # the executable bit the code signature covers, have to survive.
           ditto -c -k --keepParent "$app" \
-            artifacts/waveform_viewer-macos-arm64.zip
+            artifacts/waveform_viewer-${{ matrix.os }}-arm64.zip
 
       - name: Upload MacOS ARM artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: waveform_viewer-macos-arm64
-          path: artifacts/waveform_viewer-macos-arm64.zip
+          name: waveform_viewer-${{ matrix.os }}-arm64
+          path: artifacts/waveform_viewer-${{ matrix.os }}-arm64.zip
           # As on linux - upload the archive as-is rather than zipping the zip
           archive: false
 
-      # ─────────────── ONLY ON TAGS ───────────────
+
+  # ─────────────── ONLY ON TAGS ───────────────
+  # A single release job rather than one per build. Four matrix jobs all
+  # calling the release action would race to create the same release on a tag
+  # push - allowUpdates covers the update, but not two jobs both finding no
+  # release and both trying to create it.
+  release:
+    name: release
+    needs: [build_and_release_linux, build_and_release_macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Collect every build
+        uses: actions/download-artifact@v7
+        with:
+          # No name, so everything this run produced
+          path: dist
+
+      - name: 📋 Show what will be released
+        run: find dist -type f | sort
+
       - name: 🏷️ Create or update Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: ncipollo/release-action@v1
         with:
           tag:       ${{ github.ref_name }}
           name:      Release ${{ github.ref_name }}
-          artifacts: artifacts/waveform_viewer-macos-arm64.zip
-          # The linux job attaches to this same release
+          # Globbed because download-artifact nests each artifact in a
+          # directory of its own name.
+          artifacts: "dist/**/*.tar.gz,dist/**/*.zip"
           allowUpdates: true
           token:     ${{ secrets.GITHUB_TOKEN }}
 
