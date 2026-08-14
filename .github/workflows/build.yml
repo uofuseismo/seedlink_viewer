@@ -67,8 +67,10 @@ jobs:
           flutter test test/types_test.dart
           flutter test test/slclient_packet_test.dart
           flutter test test/slclient_streams_test.dart
+          flutter test test/menu_bar_test.dart
           flutter test test/stream_source_test.dart
-
+          flutter test test/stream_selector_test.dart
+          
       - name: Build Linux
         run: |
           dart run ffigen --config ffigen.yaml
@@ -173,7 +175,9 @@ jobs:
           flutter test test/types_test.dart
           flutter test test/slclient_packet_test.dart
           flutter test test/slclient_streams_test.dart
+          flutter test test/menu_bar_test.dart
           flutter test test/stream_source_test.dart
+          flutter test test/stream_selector_test.dart
 
       - name: Build MacOS
         run: |

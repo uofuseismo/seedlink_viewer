@@ -60,6 +60,15 @@ dev_dependencies:
 # The following section is specific to Flutter packages.
 flutter:
 
+  config:
+    # Release and profile macOS builds default to a universal binary, so the
+    # native asset hook gets invoked for x86_64 as well as arm64 and fails to
+    # link against the arm64-only libslink/libmseed built on the (Apple
+    # Silicon) runner. We only ship Apple Silicon, so build arm64 only.
+    # Set here rather than via "flutter config" so it applies to CI and to
+    # every developer machine without a separate setup step.
+    enable-macos-arm64-only: true
+
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
