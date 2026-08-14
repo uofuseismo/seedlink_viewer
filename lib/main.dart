@@ -1,5 +1,9 @@
+import 'dart:io' show exit;
 import 'package:material_ui/material_ui.dart';
+import './models/stream_identifier.dart';
+import './services/stream_source.dart';
 import './views/stream_painter.dart';
+import './views/stream_selector_dialog.dart';
 //import './native/native_bridge.dart';
 
 
@@ -33,24 +37,121 @@ class MyApp extends StatelessWidget {
         // tested with just a hot reload.
         colorScheme: .fromSeed(seedColor: Colors.red),
       ),
-      home: Scaffold(
-        appBar: AppBar(
-          //title: Text('native sum(3, 4) = ${NativeBridge.sum(3, 4)}'),
-          title: Text('native sum(3, 4)'),
+      home: const WaveformViewerHome(),
+    );
+  }
+}
+
+/// The main window: a menu bar over a stack of plots, one per selected stream.
+class WaveformViewerHome extends StatefulWidget {
+  const WaveformViewerHome({super.key});
+
+  @override
+  State<WaveformViewerHome> createState() => _WaveformViewerHomeState();
+}
+
+class _WaveformViewerHomeState extends State<WaveformViewerHome> {
+  // TODO replace with a source backed by a live SEEDLink connection
+  static const StreamSource _source = SampleStreamSource();
+
+  /// The streams to plot, top to bottom.
+  var _selected = <StreamIdentifier>[];
+
+  Future<void> _showStreamSelector() async {
+    final chosen = await showStreamSelector(
+      context,
+      source: _source,
+      initialSelection: _selected,
+    );
+    if (chosen != null && mounted) {
+      setState(() => _selected = chosen);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(alignment: Alignment.centerLeft, child: _buildMenuBar()),
+          Expanded(child: _buildPlots()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMenuBar() {
+    return MenuBar(
+      children: [
+        SubmenuButton(
+          menuChildren: [
+            MenuItemButton(
+              onPressed: () => exit(0),
+              child: const MenuAcceleratorLabel('E&xit'),
+            ),
+          ],
+          child: const MenuAcceleratorLabel('&File'),
         ),
-        body: SizedBox(
-          width: double.infinity,
-          height: double.infinity,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: List.generate(3, (i) => Expanded(
-              child: StreamPainter(
-                backgroundColor: i % 2 == 0 ? Colors.white : Colors.grey,
-              ),
-            )),
+        SubmenuButton(
+          menuChildren: [
+            MenuItemButton(
+              onPressed: _showStreamSelector,
+              child: const MenuAcceleratorLabel('&Stream selector...'),
+            ),
+          ],
+          child: const MenuAcceleratorLabel('&Selection'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlots() {
+    // Nothing picked yet, so keep showing the simulated traces
+    if (_selected.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: List.generate(
+          3,
+          (i) => Expanded(
+            child: StreamPainter(
+              backgroundColor: i % 2 == 0 ? Colors.white : Colors.grey,
+            ),
           ),
         ),
-      ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < _selected.length; i++)
+          Expanded(child: _buildPlot(_selected[i], i)),
+      ],
+    );
+  }
+
+  Widget _buildPlot(StreamIdentifier stream, int index) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // The traces are still simulated - only the layout is driven by the
+        // selection until getPackets is wired up.
+        StreamPainter(
+          backgroundColor: index % 2 == 0 ? Colors.white : Colors.grey,
+        ),
+        Positioned(
+          left: 8,
+          top: 4,
+          child: Text(
+            stream.toString(),
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

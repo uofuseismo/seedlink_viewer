@@ -65,18 +65,22 @@ jobs:
         run: |
           dart run ffigen --config ffigen.yaml
           flutter test test/types_test.dart
+          flutter test test/slclient_packet_test.dart
           flutter test test/slclient_streams_test.dart
+          flutter test test/stream_source_test.dart
 
       - name: Build Linux
         run: |
-          ls 
           dart run ffigen --config ffigen.yaml
           flutter build linux --release
 
       - name: 📦 Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp -r build/linux/x64/release/bundle/ artifacts
+          # The executable cannot run on its own - it needs the sibling lib/
+          # and data/ directories - so ship the whole bundle as one archive.
+          tar -czf artifacts/waveform_viewer-linux-x64.tar.gz \
+            -C build/linux/x64/release/bundle .
 
       - name: Upload Ubuntu artifacts
         uses: actions/upload-artifact@v7
@@ -91,7 +95,10 @@ jobs:
         with:
           tag:       ${{ github.ref_name }}
           name:      Release ${{ github.ref_name }}
-          artifacts: artifacts-ubuntu/waveform_viewer
+          # A workspace path, not the upload-artifact name above
+          artifacts: artifacts/waveform_viewer-linux-x64.tar.gz
+          # The macos job attaches to this same release
+          allowUpdates: true
           token:     ${{ secrets.GITHUB_TOKEN }}
  
   build_and_release_macos: 
@@ -114,8 +121,10 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: brew install boost
 
-      - name: Fix Boost include path
-        run: echo "BOOST_INCLUDEDIR=$(brew --prefix boost)/include" >> "$GITHUB_ENV"
+      # No step is needed to point the build at Boost. Build hooks run with a
+      # sanitised environment (only HOME, PATH and GOPATH survive), so exporting
+      # BOOST_INCLUDEDIR here would never reach hook/build.dart. The hook asks
+      # brew for the prefix itself - see findBoostIncludeDirectory.
 
       - name: 🦋 Setup Flutter
         uses: subosito/flutter-action@v2
@@ -142,17 +151,19 @@ jobs:
       - name: 📥 Get dependencies
         run: flutter pub get
 
-      - name: otool some stuff
-        run: |
-          otool -D third_party/libslink/libslink.dylib
-          otool -D third_party/libmseed/libmseed.dylib
-          otool -L third_party/libslink/libslink.4.2.0.dylib
+      #- name: otool some stuff
+      #  run: |
+      #    otool -D third_party/libslink/libslink.dylib
+      #    otool -D third_party/libmseed/libmseed.dylib
+      #    otool -L third_party/libslink/libslink.4.2.0.dylib
 
       - name: ✅ Run tests
         run: |
           dart run ffigen --config ffigen.yaml
           flutter test test/types_test.dart
+          flutter test test/slclient_packet_test.dart
           flutter test test/slclient_streams_test.dart
+          flutter test test/stream_source_test.dart
 
       - name: Build MacOS
         run: |
@@ -162,13 +173,29 @@ jobs:
       - name: 📦 Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp -r build/macos/Build/Products/Release/*app artifacts/
+          app="$(ls -d build/macos/Build/Products/Release/*.app | head -1)"
+          # ditto rather than zip: a .app is a directory whose symlinks, and
+          # the executable bit the code signature covers, have to survive.
+          ditto -c -k --keepParent "$app" \
+            artifacts/waveform_viewer-macos-arm64.zip
 
       - name: Upload MacOS ARM artifacts
         uses: actions/upload-artifact@v7
         with:
           name: artifacts-macos-arm
           path: artifacts
+
+      # ─────────────── ONLY ON TAGS ───────────────
+      - name: 🏷️ Create or update Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: ncipollo/release-action@v1
+        with:
+          tag:       ${{ github.ref_name }}
+          name:      Release ${{ github.ref_name }}
+          artifacts: artifacts/waveform_viewer-macos-arm64.zip
+          # The linux job attaches to this same release
+          allowUpdates: true
+          token:     ${{ secrets.GITHUB_TOKEN }}
 
   #build_and_release_windows:
   #  runs-on: windows-latest
