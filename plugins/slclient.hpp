@@ -27,6 +27,18 @@ extern "C" {
 #define CHANNEL_SIZE 8
 #define LOCATION_SIZE 8
 #define HOST_SIZE 256
+
+// Sized to each platform's longest path.  Spelled out rather than using
+// PATH_MAX because that needs <limits.h> and does not exist on Windows.
+// This makes the struct a different size per platform, so the dart bindings
+// have to be regenerated per platform - CI already does that before building.
+#if __APPLE__
+#define CERTIFICATE_PATH_SIZE 1024   // Darwin PATH_MAX
+#elif _WIN32
+#define CERTIFICATE_PATH_SIZE 260    // MAX_PATH
+#else
+#define CERTIFICATE_PATH_SIZE 4096   // Linux PATH_MAX
+#endif
 // Matches libslink's SL_UNSETSEQUENCE.  Note dart reads this as -1 because
 // its integers are signed.
 #define UNSET_SEQUENCE_NUMBER UINT64_MAX
@@ -42,6 +54,15 @@ typedef struct SEEDLinkConnectionOptions
     char *host;        // null terminated name of host - e.g., localhost
     uint16_t port;     // Port number - e.g., 18000
     bool useTLS;       // Use TLS - true indicates using TLS (false for now)
+    // Path to the CA certificate to trust, or empty for the system defaults.
+    // Only consulted when useTLS is true.
+    //
+    // NOT YET APPLIED: libslink's only TLS control is sl_set_tlsmode, and it
+    // locates certificates from the LIBSLINK_TLS_CERT_FILE and
+    // LIBSLINK_TLS_CERT_PATH environment variables or a built-in list of
+    // system locations. There is no per-connection setter, so honouring this
+    // means setting those variables for the whole process before connecting.
+    char certificatePath[CERTIFICATE_PATH_SIZE];
 } SEEDLinkConnectionOptions;
 
 typedef struct Packet
@@ -76,6 +97,11 @@ typedef struct SEEDLinkConnection
     bool isReady;          // True indicates the connection is ready to use.
     bool hasConnection;    // True indicates the connection pointer exists.
 } SEEDLinkConnection;
+
+/// The size of SEEDLinkConnectionOptions.certificatePath on this platform.
+/// It varies by platform and the generated dart bindings do not carry macros,
+/// so callers ask for it rather than assuming a value.
+FFI_PLUGIN_EXPORT int getCertificatePathSize(void);
 
 /// Creates the connection from the inpu toptions.
 FFI_PLUGIN_EXPORT intptr_t createConnection(const SEEDLinkConnectionOptions *options,

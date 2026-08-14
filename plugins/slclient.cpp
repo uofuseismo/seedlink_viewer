@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -28,6 +29,70 @@ namespace
 const std::string CLIENT_NAME{"wave_viewer_client"};
 // TODO should lift this from the package
 const std::string CLIENT_VERSION{"0.0.1"};
+
+#if _WIN32
+#define SET_ENVIRONMENT(name, value) _putenv_s(name, value)
+#define UNSET_ENVIRONMENT(name) _putenv_s(name, "")
+#else
+#define SET_ENVIRONMENT(name, value) setenv(name, value, 1)
+#define UNSET_ENVIRONMENT(name) unsetenv(name)
+#endif
+
+/// Points libslink at the certificate authority certificates to trust.
+///
+/// libslink has no per-connection setter for this - load_ca_certs only reads
+/// the environment - so this necessarily applies to the whole process. That is
+/// tolerable while the application holds one connection at a time.
+///
+/// N.B. libslink's documentation and its own log messages call these
+/// LIBSLINK_TLS_CERT_FILE and LIBSLINK_TLS_CERT_PATH, but load_ca_certs
+/// actually reads LIBSLINK_CA_CERT_FILE and LIBSLINK_CA_CERT_PATH. Both
+/// spellings are written so this keeps working whichever way that gets
+/// reconciled upstream.
+intptr_t applyCertificatePath(const std::string &certificatePath)
+{
+    const std::array<const char *, 2> fileVariables
+    {
+        "LIBSLINK_CA_CERT_FILE", "LIBSLINK_TLS_CERT_FILE"
+    };
+    const std::array<const char *, 2> pathVariables
+    {
+        "LIBSLINK_CA_CERT_PATH", "LIBSLINK_TLS_CERT_PATH"
+    };
+    // Nothing chosen, so clear whatever an earlier connection left behind and
+    // let libslink fall back to the system locations it already knows about.
+    if (certificatePath.empty())
+    {
+        for (auto name : fileVariables){UNSET_ENVIRONMENT(name);}
+        for (auto name : pathVariables){UNSET_ENVIRONMENT(name);}
+        return 0;
+    }
+
+    std::error_code errorCode;
+    if (!std::filesystem::exists(certificatePath, errorCode) || errorCode)
+    {
+        std::cerr << "Certificate path " << certificatePath
+                  << " does not exist" << std::endl;
+        return -1;
+    }
+    // A directory holds a pile of certificates and a file is a single bundle.
+    // Accept either so picking a bundle by mistake still does what was meant.
+    const bool isDirectory
+        = std::filesystem::is_directory(certificatePath, errorCode) &&
+          !errorCode;
+    const auto &wanted = isDirectory ? pathVariables : fileVariables;
+    const auto &unwanted = isDirectory ? fileVariables : pathVariables;
+    for (auto name : unwanted){UNSET_ENVIRONMENT(name);}
+    for (auto name : wanted)
+    {
+        if (SET_ENVIRONMENT(name, certificatePath.c_str()) != 0)
+        {
+            std::cerr << "Failed to set " << name << std::endl;
+            return -1;
+        }
+    }
+    return 0;
+}
 
 /// Applies the connection settings this client always wants.
 void setConnectionOptions(SLCD *slConnection, const bool useTLS)
@@ -143,7 +208,10 @@ intptr_t setStreamsList(const std::vector<std::string> &streamNames,
 
 Packet miniSEEDToPacket(const MS3Record &miniSEEDRecord)
 {
-    Packet packet;
+    // Value initialised: an early throw would otherwise leave the caller
+    // looking at uninitialised codes, and nothing else sets sequenceNumber.
+    Packet packet{};
+    packet.sequenceNumber = UNSET_SEQUENCE_NUMBER;
     // Some simple stuff
     if (miniSEEDRecord.samprate <= 0)
     {
@@ -223,8 +291,15 @@ Packet miniSEEDToPacket(const MS3Record &miniSEEDRecord)
     packet.data = nullptr;
     if (packet.nSamples > 0)
     {
+        // sizeof(double), not sizeof(double *) - the two happen to agree on
+        // 64 bit but the pointer is 4 bytes on a 32 bit target, which would
+        // undersize the buffer by half.
         packet.data
-            = static_cast<double *> (calloc(packet.nSamples, sizeof(double *)));
+            = static_cast<double *> (calloc(packet.nSamples, sizeof(double)));
+        if (packet.data == nullptr)
+        {
+            throw std::runtime_error("Failed to allocate packet samples");
+        }
         if (miniSEEDRecord.sampletype == 'i')
         {
             const auto data
@@ -312,6 +387,11 @@ std::vector<Packet>
 
 }
 
+FFI_PLUGIN_EXPORT int getCertificatePathSize(void)
+{
+    return CERTIFICATE_PATH_SIZE;
+}
+
 FFI_PLUGIN_EXPORT intptr_t createConnection(
     const SEEDLinkConnectionOptions *options,
     SEEDLinkConnection *connection)
@@ -343,6 +423,25 @@ FFI_PLUGIN_EXPORT intptr_t createConnection(
     {
         std::cerr << "Host " << host << " is too long" << std::endl;
         return -1;
+    }
+    // The certificate path is fixed width, so refuse an oversized one rather
+    // than quietly trusting a truncated path.
+    if (options->useTLS)
+    {
+        if (options->certificatePath[CERTIFICATE_PATH_SIZE - 1] != '\0')
+        {
+            std::cerr << "Certificate path is not null terminated" << std::endl;
+            return -1;
+        }
+        // An empty path means the system certificates, which libslink finds by
+        // itself.  Deliberately not the working directory - the application is
+        // launched from wherever, and pointing a trust store at that would be
+        // both surprising and unsafe.
+        const std::string certificatePath{options->certificatePath};
+        if (applyCertificatePath(certificatePath) != 0)
+        {
+            return -1;
+        }
     }
     // Remember how we got here so modifySelections can rebuild the connection
     std::memcpy(connection->host, host.data(), host.size());
@@ -452,6 +551,9 @@ FFI_PLUGIN_EXPORT void freePackets(Packets *packets)
                 freePacket(&packets->packets[i]);
             }
             free(packets->packets);
+            // Null it as well, the way freeStreams does.  Leaving a dangling
+            // pointer behind invites a second free or a read of freed memory.
+            packets->packets = nullptr;
         }
         packets->nPackets = 0;
     }
@@ -773,7 +875,15 @@ FFI_PLUGIN_EXPORT
                         const int maxPackets,
                         Packets *packets)
 {
-    if (connection->connection == nullptr || !connection->hasConnection)
+    if (packets == nullptr)
+    {
+        std::cerr << "Packets is null" << std::endl;
+        return -1;
+    }
+    packets->packets = nullptr;
+    packets->nPackets = 0;
+    if (connection == nullptr ||
+        connection->connection == nullptr || !connection->hasConnection)
     {
         std::cerr << "Connection is null" << std::endl;
         return -1;
@@ -789,30 +899,67 @@ FFI_PLUGIN_EXPORT
                   << std::endl;
         return -1;
     }
-    // Get a handle on the connection 
+    // Get a handle on the connection
     auto slConnection = reinterpret_cast<SLCD *> (connection->connection);
+    std::vector<Packet> collected;
+    std::array<char, SL_RECV_BUFFER_SIZE> seedLinkBuffer;
     // Read as much as we can (or up until the given chunk size)
     for (int k = 0; k < maxPackets; ++k)
     {
         const SLpacketinfo *seedLinkPacketInfo{nullptr};
-        std::array<char, SL_RECV_BUFFER_SIZE> seedLinkBuffer;
-        auto returnValue = sl_collect(slConnection, 
+        auto returnValue = sl_collect(slConnection,
                                       &seedLinkPacketInfo,
                                       seedLinkBuffer.data(),
                                       SL_RECV_BUFFER_SIZE);
-        // Data! 
+        // The return value has to be checked before the packet info is
+        // touched.  sl_collect leaves it null when it has nothing to describe,
+        // and on a non-blocking connection that is most calls.
+        if (returnValue == SLNOPACKET)
+        {
+            // Nothing waiting.  Come back later rather than spinning here.
+            break;
+        }
+        if (returnValue == SLTERMINATE)
+        {
+            std::cerr << "Server issued terminate command - destroy this connection and reconnect" << std::endl;
+            for (auto &packet : collected){freePacket(&packet);}
+            return -2;
+        }
+        if (returnValue == SLTOOLARGE)
+        {
+            std::cerr << "Internal error: Payload length "
+                      << (seedLinkPacketInfo ? seedLinkPacketInfo->payloadlength : 0)
+                      << " exceeds buffer size " << SL_RECV_BUFFER_SIZE
+                      << std::endl;
+            continue;
+        }
+        if (returnValue != SLPACKET || seedLinkPacketInfo == nullptr)
+        {
+            std::cerr << "Unhandled SEEDLink return value: "
+                      << returnValue << std::endl;
+            continue;
+        }
+        // Data!  Anything else - an INFO response say - is not ours to decode.
         if (seedLinkPacketInfo->payloadformat == SLPAYLOAD_MSEED2 ||
             seedLinkPacketInfo->payloadformat == SLPAYLOAD_MSEED3)
         {
-            auto payloadLength = seedLinkPacketInfo->payloadlength;
             try
             {
-std::cout << "got data" << std::endl;
                 // N.B. I've never seen seedlink return more than
                 //      one packet at a time but we're ready for
                 //      the possibility.
                 auto temporaryPackets = ::miniSEEDBufferToPackets(
-                    seedLinkBuffer.data(), payloadLength);
+                    seedLinkBuffer.data(),
+                    static_cast<int> (seedLinkPacketInfo->payloadlength));
+                for (auto &packet : temporaryPackets)
+                {
+                    // The sequence number belongs to the SEEDLink packet, not
+                    // the miniSEED record inside it, so it is stamped here.
+                    // Holding on to the last one lets a rebuilt connection
+                    // resume from this point.
+                    packet.sequenceNumber = seedLinkPacketInfo->seqnum;
+                    collected.push_back(std::move(packet));
+                }
             }
             catch (const std::exception &e)
             {
@@ -820,23 +967,23 @@ std::cout << "got data" << std::endl;
                           << e.what() << std::endl;
             }
         }
-        else if (returnValue == SLTOOLARGE)
-        {
-            std::cerr << "Internal error: Payload length "
-                      << seedLinkPacketInfo->payloadlength
-                      << " exceeds buffer size " << SL_RECV_BUFFER_SIZE
-                      << std::endl;
-        }
-        else if (returnValue == SLTERMINATE)
-        {
-            std::cerr << "Server issued terminate command - destroy this connection and reconnect" << std::endl;
-            return -2;
-        }
-        else
-        {
-            std::cerr << "Unhandled SEEDLink return value: "
-                      << returnValue << std::endl;
-        }
     }
+    if (collected.empty()){return 0;}
+    // Hand the samples over to the caller.  Copying the struct copies the
+    // data pointer, so ownership moves with it and freePackets releases it.
+    auto result
+        = static_cast<Packet *> (calloc(collected.size(), sizeof(Packet)));
+    if (result == nullptr)
+    {
+        std::cerr << "Failed to allocate packets" << std::endl;
+        for (auto &packet : collected){freePacket(&packet);}
+        return -1;
+    }
+    for (size_t i = 0; i < collected.size(); ++i)
+    {
+        result[i] = collected[i];
+    }
+    packets->packets = result;
+    packets->nPackets = static_cast<int> (collected.size());
     return 0;
 }

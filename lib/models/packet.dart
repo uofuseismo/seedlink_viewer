@@ -68,7 +68,7 @@ class Packet {
         t0Est = startTimeMuS + iStart*samplingPeriodInMicroSeconds;
       }
     }
-    print(iStart);
+    //print(iStart);
     // Now we start above the desired end time and count down.
     int iEnd = data.length;
     if (t1MuS < endTimeMuS) {
