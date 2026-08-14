@@ -51,7 +51,7 @@ typedef struct Packet
     char station[STATION_SIZE];   // Station code
     char channel[CHANNEL_SIZE];   // Channel code
     char location[LOCATION_SIZE];  // Location code
-    int64_t startTime; // Packet start time in seconds since epoch.
+    int64_t startTime; // Packet start time in nanoseconds since epoch.
     double samplingRate; // Sampling rate in hz
     int nSamples;      // Number of samples in packet.
     uint64_t sequenceNumber; // The SEEDLink sequence number of this packet, or

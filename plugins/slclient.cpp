@@ -10,8 +10,11 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 #include <libslink.h>
+#include <libmseed.h>
+#include <boost/algorithm/string/trim.hpp>
 #include <boost/json.hpp>
 // Compiles Boost.JSON into this translation unit so there is no library to
 // link and bundle alongside libslink/libmseed.  This must appear in exactly
@@ -136,6 +139,175 @@ intptr_t setStreamsList(const std::vector<std::string> &streamNames,
     streams->streams = result;
     streams->nStreams = static_cast<int> (streamNames.size());
     return 0;
+}
+
+Packet miniSEEDToPacket(const MS3Record &miniSEEDRecord)
+{
+    Packet packet;
+    // Some simple stuff
+    if (miniSEEDRecord.samprate <= 0)
+    {
+        throw std::invalid_argument("Sampling rate must be positive");
+    }    
+    packet.samplingRate = miniSEEDRecord.samprate;
+    // Number of samples            
+    auto nSamples = static_cast<int> (miniSEEDRecord.numsamples);
+    if (nSamples <= 0)
+    {   
+        throw std::invalid_argument("Empty data packet");
+    }   
+    packet.nSamples = nSamples;
+    // Start time
+    std::chrono::nanoseconds startTime
+    {   
+        static_cast<int64_t> (miniSEEDRecord.starttime)
+    };  
+    packet.startTime = startTime.count();
+    // SNCL
+    std::array<char, NETWORK_SIZE> networkWork;
+    std::array<char, STATION_SIZE> stationWork;
+    std::array<char, CHANNEL_SIZE> channelWork;
+    std::array<char, LOCATION_SIZE> locationWork;
+    std::fill(networkWork.begin(),  networkWork.end(),  '\0');
+    std::fill(stationWork.begin(),  stationWork.end(),  '\0');
+    std::fill(channelWork.begin(),  channelWork.end(),  '\0');
+    std::fill(locationWork.begin(), locationWork.end(), '\0');
+    auto returnCode = ms_sid2nslc_n(miniSEEDRecord.sid,
+                                    networkWork.data(),  networkWork.size(),
+                                    stationWork.data(),  stationWork.size(),
+                                    locationWork.data(), locationWork.size(),
+                                    channelWork.data(),  channelWork.size());
+    if (returnCode == MS_NOERROR)
+    {
+        // This is all small string optimization
+        std::string network(networkWork.data());
+        std::string station(stationWork.data());
+        std::string channel(channelWork.data());
+        std::string locationCode(locationWork.data());
+
+        boost::algorithm::trim(network);
+        if (network.empty()){throw std::runtime_error("Network is empty");}
+        std::transform(network.begin(), network.end(), network.begin(),
+                       ::toupper);
+
+        boost::algorithm::trim(station);
+        if (station.empty()){throw std::runtime_error("Station is empty");}
+        std::transform(station.begin(), station.end(), station.begin(),
+                       ::toupper);
+
+        boost::algorithm::trim(channel);
+        if (channel.empty()){throw std::runtime_error("Channel is empty");}
+        std::transform(channel.begin(), channel.end(), channel.begin(),
+                       ::toupper);
+        if (channel.empty()){throw std::runtime_error("Channel is empty");}
+
+        if (!locationCode.empty())
+        {
+            boost::algorithm::trim(locationCode);
+            std::transform(locationCode.begin(), locationCode.end(),
+                           locationCode.begin(), ::toupper);
+        }
+        if (locationCode.empty()){locationCode = "--";}
+
+        // Copy it
+        std::strcpy(packet.network,  network.c_str());
+        std::strcpy(packet.station,  station.c_str());
+        std::strcpy(packet.channel,  channel.c_str());
+        std::strcpy(packet.location, locationCode.c_str());
+    }
+    else
+    {
+        throw std::runtime_error("Couldn't unpack station identifier");
+    }
+    // Heavy data - note we're always going to a double buffer
+    packet.data = nullptr;
+    if (packet.nSamples > 0)
+    {
+        packet.data
+            = static_cast<double *> (calloc(packet.nSamples, sizeof(double *)));
+        if (miniSEEDRecord.sampletype == 'i')
+        {
+            const auto data
+                = reinterpret_cast<const int *> (miniSEEDRecord.datasamples);
+            std::copy(data, data + packet.nSamples, packet.data);
+        }
+        else if (miniSEEDRecord.sampletype == 'f')
+        {
+            const auto data
+                = reinterpret_cast<const float *> (miniSEEDRecord.datasamples);
+            std::copy(data, data + packet.nSamples, packet.data);
+        }
+        else if (miniSEEDRecord.sampletype == 'd')
+        {
+            const auto data
+                = reinterpret_cast<const double *> (miniSEEDRecord.datasamples);
+            std::copy(data, data + packet.nSamples, packet.data);
+        }
+        else
+        {
+            freePacket(&packet);
+            throw std::invalid_argument("Unhandled data type");
+        }
+    }
+    return packet;
+}
+
+std::vector<Packet>
+    miniSEEDBufferToPackets(char *msRecord,
+                            const int bufferSize)
+{
+    std::vector<Packet> dataPackets;
+    auto bufferLength = static_cast<uint64_t> (bufferSize);
+    uint64_t offset{0};
+    int failedPacketConversions{0};
+    // Iterate through the consumed buffer
+    while (bufferLength - offset > MINRECLEN)
+    {
+        // Convert every packet in the buffer
+        constexpr int8_t verbose{0};
+        constexpr uint32_t flags{MSF_UNPACKDATA};
+        MS3Record *miniSEEDRecord{nullptr};
+        auto returnCode
+            = msr3_parse(msRecord + offset,
+                         static_cast<uint64_t> (bufferSize) - offset,
+                         &miniSEEDRecord, flags,
+                         verbose);
+        if (returnCode == MS_NOERROR && miniSEEDRecord)
+        {
+            try
+            {
+                auto dataPacket = ::miniSEEDToPacket(*miniSEEDRecord);
+                dataPackets.push_back(std::move(dataPacket));
+            }
+            catch (const std::exception &e)
+            {
+                failedPacketConversions = failedPacketConversions + 1;
+                std::cerr << "Failed to convert packet because " 
+                          << e.what() << std::endl;
+            }
+            offset = offset + miniSEEDRecord->reclen;
+            msr3_free(&miniSEEDRecord);
+        }
+        else
+        {
+            if (returnCode != MS_NOERROR)
+            {
+                if (miniSEEDRecord){msr3_free(&miniSEEDRecord);}
+                throw std::runtime_error("libmseed error detected");
+            }
+            msr3_free(&miniSEEDRecord);
+            throw std::runtime_error(
+                 "Insufficient data.  Number of additional bytes estimated is "
+                + std::to_string(returnCode));
+        }
+    }
+    if (failedPacketConversions > 0)
+    {
+        std::cerr << "Failed to convert " 
+                  << failedPacketConversions
+                  << " miniSEED packets" << std::endl;
+    }
+    return dataPackets; 
 }
 
 }
@@ -632,7 +804,21 @@ FFI_PLUGIN_EXPORT
         if (seedLinkPacketInfo->payloadformat == SLPAYLOAD_MSEED2 ||
             seedLinkPacketInfo->payloadformat == SLPAYLOAD_MSEED3)
         {
-            std::cout << "Got data" << std::endl;
+            auto payloadLength = seedLinkPacketInfo->payloadlength;
+            try
+            {
+std::cout << "got data" << std::endl;
+                // N.B. I've never seen seedlink return more than
+                //      one packet at a time but we're ready for
+                //      the possibility.
+                auto temporaryPackets = ::miniSEEDBufferToPackets(
+                    seedLinkBuffer.data(), payloadLength);
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << "Failed to unpack sl packet payload because "
+                          << e.what() << std::endl;
+            }
         }
         else if (returnValue == SLTOOLARGE)
         {
