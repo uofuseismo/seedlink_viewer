@@ -13,7 +13,6 @@ import './views/connection_dialog.dart';
 import './views/multi_stream_painter.dart';
 import './views/stream_selector_dialog.dart';
 import './views/welcome_view.dart';
-//import './native/native_bridge.dart';
 
 
 void main() {
