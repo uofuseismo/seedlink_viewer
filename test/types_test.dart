@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/models/packet.dart';
-import 'package:waveform_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/models/packet.dart';
+import 'package:seedlink_viewer/models/stream_identifier.dart';
 
 bool match64x2Lists(Float64x2List a, Float64x2List b) {
   if (a.length != b.length) {

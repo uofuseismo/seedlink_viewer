@@ -1,7 +1,7 @@
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/native/slclient_bindings_generated.dart';
+import 'package:seedlink_viewer/native/slclient_bindings_generated.dart';
 
 void main() {
   group('native Packet', () {

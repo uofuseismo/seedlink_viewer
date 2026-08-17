@@ -2,8 +2,8 @@ import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/native/slclient_bindings_generated.dart';
-import 'package:waveform_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/native/slclient_bindings_generated.dart';
+import 'package:seedlink_viewer/models/stream_identifier.dart';
 
 /// Pulls the stream names out of a StreamsList so the tests can look at them.
 List<String> _toDartStrings(Pointer<StreamsList> streams) {

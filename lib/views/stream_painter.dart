@@ -169,7 +169,6 @@ class _StreamPainter extends CustomPainter {
   final PlotOptions mPlotOptions;
   final Stream _mStream;
   late DateTime _plotStartTime;
-  late DateTime _plotEndTime;
   late int _plotStartTimeInMicroSeconds;
   late int _plotEndTimeInMicroSeconds;
   //late double mInverseSpatialWidth;
@@ -216,8 +215,6 @@ class _StreamPainter extends CustomPainter {
 
     _plotStartTime
       = DateTime.fromMicrosecondsSinceEpoch(_plotStartTimeInMicroSeconds);
-    _plotEndTime
-      = DateTime.fromMicrosecondsSinceEpoch(_plotEndTimeInMicroSeconds);
 
     // Rescale to whatever is actually in the window.  A station resting on a
     // large DC offset needs the trace centred on its own midpoint, not on

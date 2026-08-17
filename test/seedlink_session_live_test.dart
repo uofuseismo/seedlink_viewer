@@ -2,8 +2,8 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/services/seedlink_session.dart';
-import 'package:waveform_viewer/services/stream_source.dart';
+import 'package:seedlink_viewer/services/seedlink_session.dart';
+import 'package:seedlink_viewer/services/stream_source.dart';
 
 /// These talk to a real SEEDLink server on localhost:18000 and are skipped
 /// by CI for that reason - see the test list in .github/workflows/build.yml.

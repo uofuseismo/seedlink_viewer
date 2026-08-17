@@ -27,6 +27,12 @@ class PlotTiming {
     Duration? history,
     this.redrawInterval = const Duration(seconds: 3),
     this.clockSlack = const Duration(seconds: 30),
+    // The analyzer suggests an initializing formal below.  It cannot be used:
+    // the field is private and a named parameter may not begin with an
+    // underscore, so `this._history` would not compile.  Keeping the field
+    // private is what makes [history] the only way to read the value, which is
+    // the point - the stored duration is an override, not the answer.
+    // ignore: prefer_initializing_formals
   }) : _history = history;
 
   /// How much data is kept behind each plot.

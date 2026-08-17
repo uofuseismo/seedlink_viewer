@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/services/stream_source.dart';
+import 'package:seedlink_viewer/services/stream_source.dart';
 
 void main() {
   group('SampleStreamSource', () {

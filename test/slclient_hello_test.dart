@@ -4,8 +4,8 @@ library;
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/native/slclient_bindings_generated.dart';
-import 'package:waveform_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/native/slclient_bindings_generated.dart';
+import 'package:seedlink_viewer/models/stream_identifier.dart';
 
 void main() {
   test('hello world: connect → identify → disconnect', () {

@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import './models/connection_profile.dart';
 import './models/plot_timing.dart';
 import './models/stream_identifier.dart';
+import './services/logging.dart';
 import './services/profile_store.dart';
 import './services/seedlink_packet_reader.dart';
 import './services/seedlink_session.dart';
@@ -10,13 +11,13 @@ import './services/stream_source.dart';
 import './views/app_menu_bar.dart';
 import './views/connection_dialog.dart';
 import './views/multi_stream_painter.dart';
-import './views/stream_painter.dart';
 import './views/stream_selector_dialog.dart';
 import './views/welcome_view.dart';
 //import './native/native_bridge.dart';
 
 
 void main() {
+  setUpLogging();
   runApp(const MyApp());
 }
 
@@ -43,7 +44,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Waveform Viewer',
+      title: 'SeedLink Viewer',
       theme: ThemeData(
         // This is the theme of your application.
         //
@@ -62,7 +63,7 @@ class MyApp extends StatelessWidget {
         // tested with just a hot reload.
         colorScheme: .fromSeed(seedColor: Colors.red),
       ),
-      home: WaveformViewerHome(
+      home: SeedLinkViewerHome(
         profileStore: profileStore,
         serverTester: serverTester,
         streamSourceBuilder: streamSourceBuilder,
@@ -72,12 +73,12 @@ class MyApp extends StatelessWidget {
 }
 
 /// The main window: a menu bar over a stack of plots, one per selected stream.
-class WaveformViewerHome extends StatefulWidget {
+class SeedLinkViewerHome extends StatefulWidget {
   final ProfileStore? profileStore;
   final ServerTester? serverTester;
   final StreamSource Function(ConnectionProfile)? streamSourceBuilder;
 
-  const WaveformViewerHome({
+  const SeedLinkViewerHome({
     super.key,
     this.profileStore,
     this.serverTester,
@@ -85,10 +86,10 @@ class WaveformViewerHome extends StatefulWidget {
   });
 
   @override
-  State<WaveformViewerHome> createState() => _WaveformViewerHomeState();
+  State<SeedLinkViewerHome> createState() => _SeedLinkViewerHomeState();
 }
 
-class _WaveformViewerHomeState extends State<WaveformViewerHome> {
+class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
   late final ProfileStore _store = widget.profileStore ?? JsonFileProfileStore();
 
   /// The saved connections, as listed in the Connection menu.

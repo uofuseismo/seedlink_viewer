@@ -2,9 +2,9 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind, kLongPressTimeout
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:waveform_viewer/models/stream_identifier.dart';
-import 'package:waveform_viewer/services/stream_source.dart';
-import 'package:waveform_viewer/views/stream_selector_dialog.dart';
+import 'package:seedlink_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/services/stream_source.dart';
+import 'package:seedlink_viewer/views/stream_selector_dialog.dart';
 
 /// A source with a known answer so the tests do not depend on a server or on
 /// the sample asset.

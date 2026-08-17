@@ -21,7 +21,7 @@ class ProfileStoreException implements Exception {
 }
 
 /// Keeps profiles in a JSON file under the application support directory -
-/// ~/.local/share/waveform_viewer on linux, ~/Library/Application Support on
+/// ~/.local/share/seedlink_viewer on linux, ~/Library/Application Support on
 /// macOS.
 class JsonFileProfileStore implements ProfileStore {
   /// Bumped when the on-disk shape changes so an old file can be migrated

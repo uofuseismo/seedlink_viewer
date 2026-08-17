@@ -1,16 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/models/connection_profile.dart';
-import 'package:waveform_viewer/models/stream_identifier.dart';
-import 'package:waveform_viewer/services/profile_store.dart';
+import 'package:seedlink_viewer/models/connection_profile.dart';
+import 'package:seedlink_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/services/profile_store.dart';
 
 void main() {
   late Directory directory;
   late JsonFileProfileStore store;
 
   setUp(() {
-    directory = Directory.systemTemp.createTempSync('waveform_profiles');
+    directory = Directory.systemTemp.createTempSync('seedlink_profiles');
     store = JsonFileProfileStore(directory: () async => directory);
   });
 

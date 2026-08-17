@@ -87,7 +87,7 @@ void main(List<String> args) async {
         sources: ['plugins/slclient.cpp'],
         includes: ['third_party/libslink',
                    'third_party/libmseed',
-                   if (boost != null) boost,
+                   ?boost,
                   ],
         std: 'c++20',
         language: Language.cpp,
@@ -102,7 +102,9 @@ void main(List<String> args) async {
         output: output,
         logger: Logger('')
           ..level = Level.ALL
-          ..onRecord.listen((record) => print(record.message)),
+          // The hook runs as its own process during the build, so its records
+          // belong on stdout where the build log picks them up.
+          ..onRecord.listen((record) => stdout.writeln(record.message)),
       );
     }
   });
@@ -112,7 +114,7 @@ void main(List<String> args) async {
 ///
 ///     hooks:
 ///       user_defines:
-///         waveform_viewer:
+///         seedlink_viewer:
 ///           boost_include: /opt/homebrew/opt/boost/include
 ///
 /// This is the supported way to hand configuration to a build hook. Use it
@@ -124,7 +126,7 @@ String? userDefinedBoostInclude(BuildInput input) {
   }
   if (value is! String) {
     throw const FormatException(
-      'hooks.user_defines.waveform_viewer.boost_include must be a string',
+      'hooks.user_defines.seedlink_viewer.boost_include must be a string',
     );
   }
   return value;

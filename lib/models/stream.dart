@@ -1,7 +1,10 @@
 import 'dart:math';
 import 'dart:typed_data';
+import '../services/logging.dart';
 import './packet.dart';
 import './stream_identifier.dart';
+
+final _log = Logger('seedlink.stream');
 
 /// Defines a stream (a list of packets with a stream identifier)
 class Stream {
@@ -74,8 +77,16 @@ class Stream {
            maxValue = (maxValue == null) ? pMinMax.y : max(maxValue, pMinMax.y);
          }
       }
-      catch (e) {
-        print('$e');
+      catch (e, stackTrace) {
+        // One bad packet must not blank the whole plot, so the range is taken
+        // from the rest.  Logged rather than swallowed: a packet that cannot
+        // report its own extrema is a decoding bug worth seeing.
+        _log.warning(
+          'skipping packet ${streamIdentifier.toString()} '
+          'starting ${packet.startTimeMuS} when scaling',
+          e,
+          stackTrace,
+        );
       }
     }
     if (minValue == null || maxValue == null) {

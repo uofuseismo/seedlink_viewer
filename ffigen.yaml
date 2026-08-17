@@ -18,7 +18,7 @@ compiler-opts:
   - '-x'
   - 'c'
 ffi-native:
-  asset-id: 'package:waveform_viewer/native/slclient_bindings_generated.dart'
+  asset-id: 'package:seedlink_viewer/native/slclient_bindings_generated.dart'
 comments:
   style: any
   length: full

@@ -1,9 +1,9 @@
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/native/slclient_bindings_generated.dart'
+import 'package:seedlink_viewer/native/slclient_bindings_generated.dart'
     as native;
-import 'package:waveform_viewer/services/seedlink_packet_reader.dart';
+import 'package:seedlink_viewer/services/seedlink_packet_reader.dart';
 
 /// Fills a fixed width native code field.
 void writeCode(Array<Char> field, String value) {

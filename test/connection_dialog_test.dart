@@ -1,9 +1,9 @@
 import 'dart:io' show Directory;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:waveform_viewer/models/connection_profile.dart';
-import 'package:waveform_viewer/models/stream_identifier.dart';
-import 'package:waveform_viewer/views/connection_dialog.dart';
+import 'package:seedlink_viewer/models/connection_profile.dart';
+import 'package:seedlink_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/views/connection_dialog.dart';
 
 /// A tester that answers however the test wants it to.
 ServerTester answering(String identifier) {

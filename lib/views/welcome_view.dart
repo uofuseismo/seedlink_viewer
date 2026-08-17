@@ -38,7 +38,7 @@ class WelcomeView extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                'Waveform Viewer',
+                'SeedLink Viewer',
                 style: theme.textTheme.headlineSmall,
                 textAlign: TextAlign.center,
               ),

@@ -1,12 +1,12 @@
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:waveform_viewer/views/stream_painter.dart';
-import 'package:waveform_viewer/services/seedlink_packet_reader.dart';
-import 'package:waveform_viewer/views/stream_registry.dart';
-import 'package:waveform_viewer/models/packet.dart';
-import 'package:waveform_viewer/models/stream.dart' as models;
-import 'package:waveform_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/views/stream_painter.dart';
+import 'package:seedlink_viewer/services/seedlink_packet_reader.dart';
+import 'package:seedlink_viewer/views/stream_registry.dart';
+import 'package:seedlink_viewer/models/packet.dart';
+import 'package:seedlink_viewer/models/stream.dart' as models;
+import 'package:seedlink_viewer/models/stream_identifier.dart';
 
 const int _oneSecond = 1000000;
 

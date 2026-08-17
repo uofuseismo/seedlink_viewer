@@ -2,9 +2,9 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/models/stream_identifier.dart';
-import 'package:waveform_viewer/services/seedlink_packet_reader.dart';
-import 'package:waveform_viewer/services/seedlink_session.dart';
+import 'package:seedlink_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/services/seedlink_packet_reader.dart';
+import 'package:seedlink_viewer/services/seedlink_session.dart';
 
 /// Talks to a real SEEDLink server on localhost:18000.
 void main() {

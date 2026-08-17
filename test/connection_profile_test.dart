@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:waveform_viewer/models/connection_profile.dart';
-import 'package:waveform_viewer/models/stream_identifier.dart';
+import 'package:seedlink_viewer/models/connection_profile.dart';
+import 'package:seedlink_viewer/models/stream_identifier.dart';
 
 List<StreamIdentifier> streams(List<String> names) =>
     names.map(StreamIdentifier.fromString).toList();

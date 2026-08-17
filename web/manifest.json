@@ -1,6 +1,6 @@
 {
-    "name": "waveform_viewer",
-    "short_name": "waveform_viewer",
+    "name": "seedlink_viewer",
+    "short_name": "seedlink_viewer",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
