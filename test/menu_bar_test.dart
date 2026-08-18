@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:seedlink_viewer/main.dart';
@@ -5,7 +6,9 @@ import 'package:seedlink_viewer/models/connection_profile.dart';
 import 'package:seedlink_viewer/models/stream_identifier.dart';
 import 'package:seedlink_viewer/services/profile_store.dart';
 import 'package:seedlink_viewer/services/stream_source.dart';
+import 'package:seedlink_viewer/views/connection_dialog.dart';
 import 'package:seedlink_viewer/views/stream_painter.dart';
+import 'package:seedlink_viewer/views/stream_selector_dialog.dart';
 import 'package:seedlink_viewer/views/welcome_view.dart';
 
 /// A source that answers with whatever the test says the server has.
@@ -111,6 +114,21 @@ PlatformMenuItem platformItem(WidgetTester tester, String label) {
 
   bar.menus.forEach(visit);
   return found ?? (throw StateError('no platform menu item labelled $label'));
+}
+
+/// SingleActivator compares by identity, so two activators for the same
+/// keystroke are never equal. Compare what the keystroke actually is.
+void expectShortcut(
+  MenuSerializableShortcut? shortcut,
+  LogicalKeyboardKey key, {
+  bool control = false,
+  bool meta = false,
+}) {
+  expect(shortcut, isA<SingleActivator>());
+  final activator = shortcut! as SingleActivator;
+  expect(activator.trigger, key);
+  expect(activator.control, control, reason: 'control modifier');
+  expect(activator.meta, meta, reason: 'meta modifier');
 }
 
 /// The app draws a different menu bar on macOS, and flutter_test does not
@@ -238,8 +256,136 @@ void main() {
       // The confirmation and the prompt for streams both name it
       expect(find.textContaining('Connected to Utah'), findsWidgets);
       // Now connected, the tick marks which one
-      expect(platformMenuLabels(tester), contains('✓ Utah  —  localhost:18000'));
+      expect(
+        platformMenuLabels(tester),
+        contains('✓ Utah  —  localhost:18000'),
+      );
       expect(platformItem(tester, 'Disconnect').onSelected, isNotNull);
+    }, variant: systemMenuBar);
+  });
+
+  group('keyboard shortcuts', () {
+    testWidgets('Ctrl-N creates a connection without opening the menu', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      // Deliberately no openMenu first: a shortcut that only works while its
+      // own menu is showing is no shortcut at all.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(find.byType(ConnectionDialog), findsOneWidget);
+    }, variant: inWindowMenuBar);
+
+    testWidgets('Ctrl-L opens the stream selector once connected', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        profiles: [profile('Utah')],
+        serverHas: ['UU.ARUT.EHZ.01'],
+      );
+      await openMenu(tester, 'Connection');
+      await tester.tap(find.text('Connect', findRichText: true));
+      await tester.pump();
+      await tester.tap(find.text('Utah'));
+      await tester.pump();
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(find.byType(StreamSelectorDialog), findsOneWidget);
+    }, variant: inWindowMenuBar);
+
+    testWidgets('a shortcut for something greyed out does nothing', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      // Nothing is connected, so Ctrl-L must be inert rather than opening a
+      // selector onto a server that was never asked what it has.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(find.byType(StreamSelectorDialog), findsNothing);
+      expect(find.byType(WelcomeView), findsOneWidget);
+    }, variant: inWindowMenuBar);
+
+    testWidgets('a dialog closes the menu rather than stacking a second', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(find.byType(ConnectionDialog), findsOneWidget);
+
+      // A modal covers the menu bar so it cannot be clicked, but the keystroke
+      // still reaches it - and a second dialog on top of the first is a mess
+      // to unwind.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(find.byType(ConnectionDialog), findsOneWidget);
+    }, variant: inWindowMenuBar);
+
+    testWidgets('the menu shows the keystroke beside the item', (tester) async {
+      await pumpApp(tester);
+      await openMenu(tester, 'Connection');
+
+      final create = tester.widget<MenuItemButton>(
+        find
+            .ancestor(
+              of: find.text('Create...', findRichText: true),
+              matching: find.byType(MenuItemButton),
+            )
+            .first,
+      );
+      expectShortcut(create.shortcut, LogicalKeyboardKey.keyN, control: true);
+    }, variant: inWindowMenuBar);
+  });
+
+  group('on macOS the shortcuts go to the system menu', () {
+    testWidgets('they use Cmd and are carried on the platform item', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+
+      // The OS matches the keystroke itself, so what matters is that the
+      // right one is declared - and that it is Cmd rather than Ctrl.
+      expectShortcut(
+        platformItem(tester, 'Create...').shortcut,
+        LogicalKeyboardKey.keyN,
+        meta: true,
+      );
+      expectShortcut(
+        platformItem(tester, 'Stream selector...').shortcut,
+        LogicalKeyboardKey.keyL,
+        meta: true,
+      );
+    }, variant: systemMenuBar);
+
+    testWidgets('nothing is registered in dart, so nothing fires twice', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      // macOS acts on the platform menu's own shortcuts. A dart registration
+      // as well would open two dialogs on one keystroke.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+
+      expect(find.byType(ConnectionDialog), findsNothing);
     }, variant: systemMenuBar);
   });
 

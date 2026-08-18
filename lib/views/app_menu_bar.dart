@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:material_ui/material_ui.dart';
 import '../models/connection_profile.dart';
 
@@ -49,23 +50,71 @@ class AppMenuBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A modal dialog covers the in-window menu bar, so a click cannot reach it
+    // while one is up. A shortcut and the macOS system menu both still can,
+    // and either would stack a second dialog on the first, so the menu closes
+    // for as long as the home route is not the one on top. isCurrentOf rather
+    // than reading the route directly: it depends on the aspect, so this
+    // rebuilds when a dialog opens and again when it closes.
+    final interactive = ModalRoute.isCurrentOf(context) ?? true;
+    final menus = _menus(interactive: interactive);
+
     // defaultTargetPlatform rather than Platform.isMacOS so a test can pin it:
     // whoever runs the suite decides which menu bar is under test, instead of
     // whichever machine they happen to be sitting at.
     if (defaultTargetPlatform == TargetPlatform.macOS) {
+      // Nothing registers the shortcuts here. A PlatformMenuItem carries its
+      // own, and macOS matches the keystroke against the system menu itself -
+      // registering them again in dart would fire every command twice.
       return PlatformMenuBar(
-        menus: [_macApplicationMenu, ..._menus.map(_toPlatformMenu)],
+        menus: [_macApplicationMenu, ...menus.map(_toPlatformMenu)],
         // The menu lives in the system bar, so there is nothing to lay out.
         // The Align wrapping this collapses around a zero-sized child.
         child: const SizedBox.shrink(),
       );
     }
-    return MenuBar(
-      children: [
-        for (final menu in [_fileMenu, ..._menus])
-          _toMaterialEntry(context, menu),
-      ],
+    // Material shows the shortcut beside the item but does not act on it, so
+    // the same descriptions are handed to the registry to be made real.
+    return _MenuShortcuts(
+      shortcuts: _shortcutsOf([_fileMenu(interactive: interactive), ...menus]),
+      child: MenuBar(
+        children: [
+          for (final menu in [_fileMenu(interactive: interactive), ...menus])
+            _toMaterialEntry(context, menu),
+        ],
+      ),
     );
+  }
+
+  /// Ctrl on Windows and Linux, Cmd on macOS.
+  static SingleActivator _accelerator(LogicalKeyboardKey key) {
+    return defaultTargetPlatform == TargetPlatform.macOS
+        ? SingleActivator(key, meta: true)
+        : SingleActivator(key, control: true);
+  }
+
+  /// Every shortcut in the menu that leads somewhere, paired with what it does.
+  ///
+  /// Items that are greyed out are left out rather than registered as no-ops,
+  /// so Ctrl-D does nothing at all when there is nothing to disconnect from
+  /// instead of quietly swallowing the keystroke.
+  Map<ShortcutActivator, VoidCallback> _shortcutsOf(List<_Entry> entries) {
+    final shortcuts = <ShortcutActivator, VoidCallback>{};
+    void visit(_Entry entry) {
+      switch (entry) {
+        case _Separator():
+          break;
+        case _Submenu(:final children):
+          children.forEach(visit);
+        case _Item(:final shortcut, :final onSelected):
+          if (shortcut is ShortcutActivator && onSelected != null) {
+            shortcuts[shortcut as ShortcutActivator] = onSelected;
+          }
+      }
+    }
+
+    entries.forEach(visit);
+    return shortcuts;
   }
 
   // ---------------------------------------------------------------- the menu
@@ -75,44 +124,64 @@ class AppMenuBar extends StatelessWidget {
   /// File and the macOS application menu are deliberately not here: they hold
   /// the same command under different names in different places, and only one
   /// of them exists at a time.
-  List<_Submenu> get _menus => [
-        _Submenu('Co&nnection', [
-          _profileEntry(
-            label: '&Connect',
-            // A first run has nothing to connect to, so the menu points at
-            // Create instead of offering an empty list.
-            enabled: _hasProfiles,
-            onSelected: onConnect,
-            markActive: true,
-          ),
-          _Item('&Disconnect', onSelected: active == null ? null : onDisconnect),
-          const _Separator(),
-          _Item('C&reate...', onSelected: onCreate),
-          _profileEntry(
-            label: '&Edit',
-            enabled: _hasProfiles,
-            onSelected: onEdit,
-          ),
-          _profileEntry(
-            label: 'De&lete',
-            enabled: _hasProfiles,
-            onSelected: onDelete,
-          ),
-        ]),
-        _Submenu('&Selection', [
-          _Item(
-            '&Stream selector...',
-            // Nothing to choose from until a server has been asked what it
-            // has, so this stays shut until there is a connection.
-            onSelected: active == null ? null : onShowStreamSelector,
-          ),
-        ]),
-      ];
+  /// Only the leaves carry shortcuts. Connect, Edit and Delete each open onto
+  /// a list of profiles, so there is no one thing a keystroke could mean.
+  List<_Submenu> _menus({required bool interactive}) => [
+    _Submenu('Co&nnection', [
+      _profileEntry(
+        label: '&Connect',
+        // A first run has nothing to connect to, so the menu points at
+        // Create instead of offering an empty list.
+        enabled: interactive && _hasProfiles,
+        onSelected: onConnect,
+        markActive: true,
+      ),
+      _Item(
+        '&Disconnect',
+        onSelected: (interactive && active != null) ? onDisconnect : null,
+        shortcut: _accelerator(LogicalKeyboardKey.keyD),
+      ),
+      const _Separator(),
+      _Item(
+        'C&reate...',
+        onSelected: interactive ? onCreate : null,
+        shortcut: _accelerator(LogicalKeyboardKey.keyN),
+      ),
+      _profileEntry(
+        label: '&Edit',
+        enabled: interactive && _hasProfiles,
+        onSelected: onEdit,
+      ),
+      _profileEntry(
+        label: 'De&lete',
+        enabled: interactive && _hasProfiles,
+        onSelected: onDelete,
+      ),
+    ]),
+    _Submenu('&Selection', [
+      _Item(
+        '&Stream selector...',
+        // Nothing to choose from until a server has been asked what it
+        // has, so this stays shut until there is a connection.
+        onSelected: (interactive && active != null)
+            ? onShowStreamSelector
+            : null,
+        shortcut: _accelerator(LogicalKeyboardKey.keyL),
+      ),
+    ]),
+  ];
 
   /// Quitting lives in File on Windows and Linux.
-  _Submenu get _fileMenu => _Submenu('&File', [
-        _Item('E&xit', onSelected: onExit),
-      ]);
+  ///
+  /// There is no macOS counterpart to build here: Quit is provided by the
+  /// platform in the application menu and already answers to Cmd-Q.
+  _Submenu _fileMenu({required bool interactive}) => _Submenu('&File', [
+    _Item(
+      'E&xit',
+      onSelected: interactive ? onExit : null,
+      shortcut: _accelerator(LogicalKeyboardKey.keyQ),
+    ),
+  ]);
 
   /// The macOS application menu.
   ///
@@ -122,36 +191,36 @@ class AppMenuBar extends StatelessWidget {
   /// platform rather than by us, so Quit tears the app down the way macOS
   /// expects instead of going through [onExit].
   PlatformMenu get _macApplicationMenu => const PlatformMenu(
-        // macOS titles the first menu after the bundle, so this label is only
-        // what the tree calls itself.
-        label: 'SeedLink Viewer',
-        menus: [
-          PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
-          PlatformMenuItemGroup(
-            members: [
-              PlatformProvidedMenuItem(
-                type: PlatformProvidedMenuItemType.servicesSubmenu,
-              ),
-            ],
-          ),
-          PlatformMenuItemGroup(
-            members: [
-              PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.hide),
-              PlatformProvidedMenuItem(
-                type: PlatformProvidedMenuItemType.hideOtherApplications,
-              ),
-              PlatformProvidedMenuItem(
-                type: PlatformProvidedMenuItemType.showAllApplications,
-              ),
-            ],
-          ),
-          PlatformMenuItemGroup(
-            members: [
-              PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.quit),
-            ],
+    // macOS titles the first menu after the bundle, so this label is only
+    // what the tree calls itself.
+    label: 'SeedLink Viewer',
+    menus: [
+      PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
+      PlatformMenuItemGroup(
+        members: [
+          PlatformProvidedMenuItem(
+            type: PlatformProvidedMenuItemType.servicesSubmenu,
           ),
         ],
-      );
+      ),
+      PlatformMenuItemGroup(
+        members: [
+          PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.hide),
+          PlatformProvidedMenuItem(
+            type: PlatformProvidedMenuItemType.hideOtherApplications,
+          ),
+          PlatformProvidedMenuItem(
+            type: PlatformProvidedMenuItemType.showAllApplications,
+          ),
+        ],
+      ),
+      PlatformMenuItemGroup(
+        members: [
+          PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.quit),
+        ],
+      ),
+    ],
+  );
 
   /// One submenu listing every profile, used for Connect, Edit and Delete.
   ///
@@ -184,14 +253,22 @@ class AppMenuBar extends StatelessWidget {
     return switch (entry) {
       _Separator() => const Divider(height: 8),
       _Submenu(:final label, :final children) => SubmenuButton(
-          menuChildren: [
-            for (final child in children) _toMaterialEntry(context, child),
-          ],
-          child: MenuAcceleratorLabel(label),
-        ),
-      _Item(:final label, :final onSelected, :final detail, :final checked) =>
+        menuChildren: [
+          for (final child in children) _toMaterialEntry(context, child),
+        ],
+        child: MenuAcceleratorLabel(label),
+      ),
+      _Item(
+        :final label,
+        :final onSelected,
+        :final detail,
+        :final checked,
+        :final shortcut,
+      ) =>
         MenuItemButton(
           onPressed: onSelected,
+          // Displayed only - _MenuShortcuts is what makes it fire.
+          shortcut: shortcut,
           leadingIcon: checked == null
               ? null
               : Icon(
@@ -246,13 +323,16 @@ class AppMenuBar extends StatelessWidget {
       // Handled a level up, where a separator becomes a group boundary.
       _Separator() => throw StateError('separators are grouped, not rendered'),
       _Submenu(:final label, :final children) => PlatformMenu(
-          label: MenuAcceleratorLabel.stripAcceleratorMarkers(label),
-          menus: _toPlatformChildren(children),
-        ),
+        label: MenuAcceleratorLabel.stripAcceleratorMarkers(label),
+        menus: _toPlatformChildren(children),
+      ),
       _Item() => PlatformMenuItem(
-          label: _platformLabel(entry),
-          onSelected: entry.onSelected,
-        ),
+        label: _platformLabel(entry),
+        // macOS renders this next to the item and matches the keystroke
+        // against it, so nothing on the dart side has to.
+        shortcut: entry.shortcut,
+        onSelected: entry.onSelected,
+      ),
     };
   }
 
@@ -300,7 +380,17 @@ class _Item extends _Entry {
   /// set at all. The distinction matters: false still draws an empty radio.
   final bool? checked;
 
-  const _Item(this.label, {this.onSelected, this.detail, this.checked});
+  /// The keystroke that does the same thing, if there is one. Both menus can
+  /// show it; only the platform one acts on it by itself.
+  final MenuSerializableShortcut? shortcut;
+
+  const _Item(
+    this.label, {
+    this.onSelected,
+    this.detail,
+    this.checked,
+    this.shortcut,
+  });
 }
 
 class _Submenu extends _Entry {
@@ -312,4 +402,69 @@ class _Submenu extends _Entry {
 
 class _Separator extends _Entry {
   const _Separator();
+}
+
+/// Makes the menu's shortcuts actually fire on Windows and Linux.
+///
+/// Material draws the shortcut beside an item and stops there - a [MenuBar]
+/// never listens for the keystroke, and a menu that has to be open for its own
+/// accelerator to work is no use. The registry is app wide, so registering here
+/// covers the whole window rather than only this subtree.
+///
+/// The map is rebuilt from the menu on every change and swapped in wholesale,
+/// which is what keeps a shortcut from outliving the state that made it valid:
+/// disconnecting drops Ctrl-D on the same frame that greys the item out.
+class _MenuShortcuts extends StatefulWidget {
+  final Map<ShortcutActivator, VoidCallback> shortcuts;
+  final Widget child;
+
+  const _MenuShortcuts({required this.shortcuts, required this.child});
+
+  @override
+  State<_MenuShortcuts> createState() => _MenuShortcutsState();
+}
+
+class _MenuShortcutsState extends State<_MenuShortcuts> {
+  ShortcutRegistryEntry? _registration;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _register();
+  }
+
+  @override
+  void didUpdateWidget(_MenuShortcuts oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _register();
+  }
+
+  void _register() {
+    final intents = {
+      for (final entry in widget.shortcuts.entries)
+        entry.key: VoidCallbackIntent(entry.value),
+    };
+    // The registry refuses an empty map, so having nothing to offer is said by
+    // holding no registration at all rather than by holding an empty one.
+    if (intents.isEmpty) {
+      _registration?.dispose();
+      _registration = null;
+      return;
+    }
+    if (_registration == null) {
+      _registration = ShortcutRegistry.of(context).addAll(intents);
+    } else {
+      _registration!.replaceAll(intents);
+    }
+  }
+
+  @override
+  void dispose() {
+    _registration?.dispose();
+    _registration = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
