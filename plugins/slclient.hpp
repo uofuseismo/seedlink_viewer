@@ -137,11 +137,13 @@ FFI_PLUGIN_EXPORT
                         int timeOutMilliSeconds,
                         StreamsList *streams);
 
-/// Converts a SEEDLink v4 INFO STREAMS response into a list of stream names.
+/// Converts an INFO STREAMS response into a list of stream names.
 /// This is the parsing half of getStreams split out so it can be exercised
 /// against a canned response without touching the network.
-/// @param[in] response  The null terminated JSON payload returned by the
-///                      server for an INFO STREAMS request.
+/// @param[in] response  The null terminated payload returned by the server
+///                      for an INFO STREAMS request.  v4 servers answer in
+///                      JSON and v3 servers in XML; which one arrived is read
+///                      off the payload, so either may be passed here.
 /// @param[out] streams  The streams named in the response.  See getStreams
 ///                      for the naming.  Release this with freeStreams.
 /// @result 0 indicates success.

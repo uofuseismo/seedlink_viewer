@@ -3,12 +3,14 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -21,6 +23,11 @@
 // link and bundle alongside libslink/libmseed.  This must appear in exactly
 // one source file.
 #include <boost/json/src.hpp>
+// Boost.PropertyTree reads XML through the RapidXML headers it bundles, so
+// the v3 parser stays header only like the rest of the Boost used here - the
+// build hook only ever adds an include directory.
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/xml_parser.hpp>
 #include "slclient.hpp"
 
 namespace
@@ -400,6 +407,161 @@ std::vector<Packet>
     return dataPackets; 
 }
 
+/// The name a stream is listed under: NET.STA.CHAN.LOC, with an absent
+/// location code written as -- so the field is never empty.  Both the v3 and
+/// the v4 parser end here so the two servers cannot drift apart in how they
+/// name the same channel.
+std::string toStreamName(std::string network,
+                         std::string station,
+                         std::string channel,
+                         std::string location)
+{
+    boost::algorithm::trim(network);
+    boost::algorithm::trim(station);
+    boost::algorithm::trim(channel);
+    boost::algorithm::trim(location);
+    if (network.empty() || station.empty() || channel.empty()){return "";}
+    return network + "." + station + "." + channel + "."
+         + (location.empty() ? "--" : location);
+}
+
+/// Reads the stream names out of a SEEDLink v4 INFO STREAMS reply, which is
+/// JSON.  Throws if the payload is not JSON at all.
+intptr_t parseStreamsJSON(const char *response,
+                          std::vector<std::string> &streamNames)
+{
+    boost::system::error_code errorCode;
+    auto jsonValue = boost::json::parse(response, errorCode);
+    if (errorCode)
+    {
+        std::cerr << "Failed to parse INFO STREAMS response: "
+                  << errorCode.message() << std::endl;
+        return -1;
+    }
+    auto root = jsonValue.if_object();
+    if (root == nullptr)
+    {
+        std::cerr << "INFO STREAMS response is not an object" << std::endl;
+        return -1;
+    }
+    // A server with nothing to offer simply omits the station list
+    auto stations = root->if_contains("station");
+    if (stations == nullptr){return 0;}
+    auto stationArray = stations->if_array();
+    if (stationArray == nullptr)
+    {
+        std::cerr << "INFO STREAMS station list is not an array" << std::endl;
+        return -1;
+    }
+    for (const auto &stationValue : *stationArray)
+    {
+        auto station = stationValue.if_object();
+        if (station == nullptr){continue;}
+        // Station identifiers look like UU_ARUT
+        auto stationFields = split(getString(*station, "id"), '_');
+        if (stationFields.size() != 2){continue;}
+        const auto &network = stationFields.at(0);
+        const auto &stationCode = stationFields.at(1);
+        auto seedLinkStreams = station->if_contains("stream");
+        if (seedLinkStreams == nullptr){continue;}
+        auto streamArray = seedLinkStreams->if_array();
+        if (streamArray == nullptr){continue;}
+        for (const auto &streamValue : *streamArray)
+        {
+            auto stream = streamValue.if_object();
+            if (stream == nullptr){continue;}
+            // Stream identifiers look like 01_H_H_Z - i.e., the location
+            // code followed by the band, source, and position codes that
+            // make up the channel.
+            auto streamFields = split(getString(*stream, "id"), '_');
+            if (streamFields.size() < 2){continue;}
+            const auto &location = streamFields.at(0);
+            std::string channel;
+            for (size_t i = 1; i < streamFields.size(); ++i)
+            {
+                channel = channel + streamFields.at(i);
+            }
+            auto name = toStreamName(network, stationCode, channel, location);
+            if (!name.empty()){streamNames.push_back(std::move(name));}
+        }
+    }
+    return 0;
+}
+
+/// Reads the stream names out of a SEEDLink v3 INFO STREAMS reply, which is
+/// XML wrapped in miniSEED log records:
+///
+///     <seedlink software="..." organization="..." started="...">
+///       <station name="ALP" network="UU" description="UU Station" ...>
+///         <stream location="01" seedname="ENE" type="D"
+///                 begin_time="..." end_time="..." />
+///       </station>
+///     </seedlink>
+///
+/// Everything worth having is in attributes, so nothing here depends on the
+/// text content or on the element order.
+///
+/// Throws if the payload is not well formed XML.  A reply that was truncated
+/// before its terminating record lands here as malformed rather than as a
+/// short list, which is the honest outcome - a partial station list looks
+/// exactly like a server that has fewer stations than it does.
+intptr_t parseStreamsXML(const char *response,
+                         std::vector<std::string> &streamNames)
+{
+    boost::property_tree::ptree tree;
+    std::istringstream payload{response};
+    boost::property_tree::read_xml(payload, tree);
+    auto root = tree.get_child_optional("seedlink");
+    if (!root)
+    {
+        std::cerr << "INFO STREAMS response has no seedlink element"
+                  << std::endl;
+        return -1;
+    }
+    for (const auto &[stationTag, station] : *root)
+    {
+        // <xmlattr> is property_tree's own child holding the attributes, and
+        // the header may bring other elements along, so take only stations.
+        if (stationTag != "station"){continue;}
+        auto network = station.get<std::string> ("<xmlattr>.network", "");
+        auto stationCode = station.get<std::string> ("<xmlattr>.name", "");
+        for (const auto &[streamTag, seedLinkStream] : station)
+        {
+            if (streamTag != "stream"){continue;}
+            // Absent means data on every server seen so far; anything else is
+            // a log, timing, or opaque stream that carries no waveform, and
+            // selecting one would only ever request the data records that do
+            // not exist for it.
+            auto type = seedLinkStream.get<std::string> ("<xmlattr>.type", "D");
+            boost::algorithm::trim(type);
+            if (type != "D"){continue;}
+            auto name = toStreamName(
+                network,
+                stationCode,
+                seedLinkStream.get<std::string> ("<xmlattr>.seedname", ""),
+                seedLinkStream.get<std::string> ("<xmlattr>.location", ""));
+            if (!name.empty()){streamNames.push_back(std::move(name));}
+        }
+    }
+    return 0;
+}
+
+/// The first character of a response that is not whitespace, or 0 when there
+/// is nothing but whitespace.  Which of the two INFO formats arrived is read
+/// off this rather than off the connection: parseStreamsResponse is also
+/// called directly against canned payloads, which have no connection to ask.
+char firstMeaningfulCharacter(const char *response)
+{
+    for (auto character = response; *character != '\0'; ++character)
+    {
+        if (std::isspace(static_cast<unsigned char> (*character)) == 0)
+        {
+            return *character;
+        }
+    }
+    return '\0';
+}
+
 }
 
 FFI_PLUGIN_EXPORT int getCertificatePathSize(void)
@@ -616,64 +778,27 @@ FFI_PLUGIN_EXPORT
     }
 
     std::vector<std::string> streamNames;
+    intptr_t returnValue{0};
     try
     {
-        boost::system::error_code errorCode;
-        auto jsonValue = boost::json::parse(response, errorCode);
-        if (errorCode)
+        // v4 servers answer in JSON and v3 servers in XML.  The two are told
+        // apart by what the payload starts with rather than by asking the
+        // connection which protocol it negotiated, so a canned response parses
+        // the same way a live one does.
+        const auto marker = firstMeaningfulCharacter(response);
+        if (marker == '{')
         {
-            std::cerr << "Failed to parse INFO STREAMS response: "
-                      << errorCode.message() << std::endl;
-            return -1;
+            returnValue = parseStreamsJSON(response, streamNames);
         }
-        auto root = jsonValue.if_object();
-        if (root == nullptr)
+        else if (marker == '<')
         {
-            std::cerr << "INFO STREAMS response is not an object" << std::endl;
-            return -1;
+            returnValue = parseStreamsXML(response, streamNames);
         }
-        // A server with nothing to offer simply omits the station list
-        auto stations = root->if_contains("station");
-        if (stations == nullptr){return 0;}
-        auto stationArray = stations->if_array();
-        if (stationArray == nullptr)
+        else
         {
-            std::cerr << "INFO STREAMS station list is not an array"
+            std::cerr << "INFO STREAMS response is neither JSON nor XML"
                       << std::endl;
             return -1;
-        }
-        for (const auto &stationValue : *stationArray)
-        {
-            auto station = stationValue.if_object();
-            if (station == nullptr){continue;}
-            // Station identifiers look like UU_ARUT
-            auto stationFields = split(getString(*station, "id"), '_');
-            if (stationFields.size() != 2){continue;}
-            const auto &network = stationFields.at(0);
-            const auto &stationCode = stationFields.at(1);
-            auto seedLinkStreams = station->if_contains("stream");
-            if (seedLinkStreams == nullptr){continue;}
-            auto streamArray = seedLinkStreams->if_array();
-            if (streamArray == nullptr){continue;}
-            for (const auto &streamValue : *streamArray)
-            {
-                auto stream = streamValue.if_object();
-                if (stream == nullptr){continue;}
-                // Stream identifiers look like 01_H_H_Z - i.e., the location
-                // code followed by the band, source, and position codes that
-                // make up the channel.
-                auto streamFields = split(getString(*stream, "id"), '_');
-                if (streamFields.size() < 2){continue;}
-                const auto &location = streamFields.at(0);
-                std::string channel;
-                for (size_t i = 1; i < streamFields.size(); ++i)
-                {
-                    channel = channel + streamFields.at(i);
-                }
-                streamNames.push_back(network + "." + stationCode + "."
-                                    + channel + "."
-                                    + (location.empty() ? "--" : location));
-            }
         }
     }
     catch (const std::exception &e)
@@ -682,6 +807,10 @@ FFI_PLUGIN_EXPORT
                   << e.what() << std::endl;
         return -1;
     }
+    if (returnValue != 0){return returnValue;}
+    // A station can list the same channel more than once - a v3 server names
+    // one per record type, and a stream that rolled over shows up twice - so
+    // the list is deduplicated before it reaches dart.
     std::sort(streamNames.begin(), streamNames.end());
     streamNames.erase(std::unique(streamNames.begin(), streamNames.end()),
                       streamNames.end());
@@ -722,12 +851,15 @@ FFI_PLUGIN_EXPORT
     // sends it.  The connection is non-blocking so sl_collect will report
     // SLNOPACKET until the server gets around to answering; poll until the
     // response shows up or we run out of patience.
-    const auto giveUpTime
+    auto timeOut = std::chrono::milliseconds{std::max(timeOutMilliSeconds, 0)};
+    auto giveUpTime
         = std::chrono::steady_clock::now()
-        + std::chrono::milliseconds{std::max(timeOutMilliSeconds, 0)};
+        + timeOut;
     std::vector<char> buffer(SL_RECV_BUFFER_SIZE);
     std::string payload;
     bool haveResponse{false};
+    bool isJSON{false};
+    bool isXML{false};
     while (std::chrono::steady_clock::now() < giveUpTime)
     {
         const SLpacketinfo *packetInfo{nullptr};
@@ -735,15 +867,66 @@ FFI_PLUGIN_EXPORT
                                  static_cast<uint32_t> (buffer.size()));
         if (returnValue == SLPACKET)
         {
+            // Extend the give up time in case more is coming
+            giveUpTime = giveUpTime + timeOut;
             if (packetInfo == nullptr){continue;}
             // v4 servers answer an INFO request with a single JSON payload.
             // Anything else is data that was already in flight so skip it.
             if (packetInfo->payloadformat == SLPAYLOAD_JSON &&
                 packetInfo->payloadlength > 0)
             {
-                payload.assign(buffer.data(), packetInfo->payloadlength);
+                isJSON = true;
+                if (payload.empty())
+                {
+                    payload.assign(buffer.data(), packetInfo->payloadlength);
+                }
+                else
+                {
+                    std::cout << "Appending to JSON payload..." << std::endl;
+                    payload.append(buffer.data(), packetInfo->payloadlength);
+                }
                 haveResponse = true;
                 break;
+            }
+            else if ((packetInfo->payloadformat == SLPAYLOAD_MSEED2INFO ||
+                      packetInfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM) &&
+                     packetInfo->payloadlength > 0)
+            {
+                // v3 servers answer with XML split across a run of miniSEED
+                // log records, so the payload is stitched back together here
+                // and parsed once the terminating record lands.
+                isXML = true;
+                constexpr int8_t verbose{0};
+                MS3Record *miniSEEDRecord{nullptr};
+                auto parseStatus
+                    = msr3_parse(buffer.data(), packetInfo->payloadlength,
+                                 &miniSEEDRecord, MSF_UNPACKDATA, verbose);
+                if (parseStatus != MS_NOERROR || miniSEEDRecord == nullptr)
+                {
+                    // Dereferencing the record regardless would crash here,
+                    // and a dropped record only costs part of the reply - the
+                    // XML will fail to parse and say so.
+                    std::cerr << "Failed to unpack an INFO record: "
+                              << parseStatus << std::endl;
+                    if (miniSEEDRecord != nullptr){msr3_free(&miniSEEDRecord);}
+                    continue;
+                }
+                const auto xmlBit
+                    = reinterpret_cast<const char *>
+                      (miniSEEDRecord->datasamples);
+                const auto xmlBitSize
+                    = static_cast<int> (miniSEEDRecord->numsamples);
+                if (xmlBit != nullptr && xmlBitSize > 0)
+                {
+                    payload.append(xmlBit, xmlBitSize);
+                }
+                msr3_free(&miniSEEDRecord);
+                // Terminate?
+                if (packetInfo->payloadformat == SLPAYLOAD_MSEED2INFOTERM)
+                {
+                    haveResponse = true;
+                    break;
+                }
             }
         }
         else if (returnValue == SLTOOLARGE)
@@ -761,6 +944,13 @@ FFI_PLUGIN_EXPORT
         }
         else if (returnValue == SLNOPACKET)
         {
+            // Nothing waiting on the socket right now, which does not mean the
+            // reply is over.  A v3 server sends its XML as a run of records
+            // with gaps between them and sl_collect reports SLNOPACKET in
+            // every gap, so leaving here on the first one truncates the stream
+            // list.  The reply is finished when the terminating record lands,
+            // which leaves the loop above; a server that stops without one is
+            // caught by the give up time, which every packet pushes back.
             std::this_thread::sleep_for(std::chrono::milliseconds{10});
         }
         else if (returnValue == SLTERMINATE)
@@ -780,11 +970,25 @@ FFI_PLUGIN_EXPORT
             return -1;
         }
     }
+    // A v3 server that stops sending without a terminating record still left
+    // us something.  It is better handed to the parser, which will reject it
+    // if it really was cut short, than reported as a timeout.
+    if (isXML && !payload.empty()){haveResponse = true;}
     if (!haveResponse)
     {
         std::cerr << "Timed out waiting for the INFO STREAMS response"
                   << std::endl;
         return -3;
+    }
+    if (isJSON && isXML)
+    {
+        std::cerr << "Cannot parse XML and JSON" << std::endl;
+        return -1;
+    }
+    if (!isJSON && !isXML)
+    {
+        std::cerr << "Unhandled info format - must be XML or JSON" << std::endl;
+        return -1;
     }
     return parseStreamsResponse(payload.c_str(), streams);
 }
