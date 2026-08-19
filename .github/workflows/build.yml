@@ -24,7 +24,9 @@ jobs:
       # ubuntu-26.04 is a preview image and can break independently of us.
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-26.04]
+        os: [ubuntu-24.04,
+             ubuntu-26.04,
+             ubuntu-24.04-arm]
 
     steps:
       - name: 📂 Checkout code
