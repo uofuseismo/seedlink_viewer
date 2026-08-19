@@ -17,31 +17,86 @@ concurrency:
 
 jobs:
   build_and_release_linux:
-    name: linux (${{ matrix.os }})
+    name: linux (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     strategy:
       # One runner failing should not hide the results from the others -
       # ubuntu-26.04 is a preview image and can break independently of us.
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04,
-             ubuntu-26.04]
-
+        # include rather than a bare os list because arm64 needs a different
+        # Flutter install and lands its bundle under a different path. label is
+        # what artifacts are named after: matrix.os alone would give the arm
+        # entry the redundant name ubuntu-24.04-arm-arm64.
+        include:
+          - { os: ubuntu-24.04,     arch: x64,   label: ubuntu-24.04-x64 }
+          - { os: ubuntu-26.04,     arch: x64,   label: ubuntu-26.04-x64 }
+          - { os: ubuntu-24.04-arm, arch: arm64, label: ubuntu-24.04-arm64 }
+ 
     steps:
       - name: 📂 Checkout code
         uses: actions/checkout@v6
-
+ 
       - name: 🚀 Cache pub deps
         uses: actions/cache@v5
         with:
           path: ~/.pub-cache
-          key: ${{ matrix.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
-          restore-keys: ${{ matrix.os }}-pub-
-
-      - name: 🦋 Setup Flutter
+          # Keyed on label, not os, so the two architectures never share a
+          # cache - ffigen and the native asset pipeline put arch-specific
+          # build output in here.
+          key: ${{ matrix.label }}-pub-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: ${{ matrix.label }}-pub-
+ 
+      # ── Flutter, two ways ─────────────────────────────────────────────────
+      # Flutter publishes no linux-arm64 SDK tarball, only x64, so
+      # subosito/flutter-action cannot resolve any version on an arm runner and
+      # fails with "Unable to determine Flutter version for channel: stable".
+      # See subosito/flutter-action#345. Cross-building is not an escape hatch
+      # either - flutter build linux --target-platform=linux-arm64 refuses on an
+      # x64 host (flutter/flutter#148439). So arm64 clones the SDK from git,
+      # which is supported as a host (flutter/flutter#61221); update_dart_sdk.sh
+      # detects aarch64 and fetches the arm64 Dart SDK by itself.
+      - name: 🦋 Setup Flutter (x64)
+        if: matrix.arch == 'x64'
         uses: subosito/flutter-action@v2
-        with: { flutter-version: 3.47.0, channel: stable }
-
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+ 
+      - name: 🚀 Cache Flutter SDK (arm64)
+        if: matrix.arch == 'arm64'
+        uses: actions/cache@v5
+        with:
+          path: ~/flutter
+          key: ${{ matrix.label }}-flutter-${{ env.FLUTTER_VERSION }}
+ 
+      - name: 🦋 Setup Flutter (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          # A half-restored cache is worse than none - re-clone unless the
+          # entrypoint is actually there and executable.
+          if [ ! -x "$HOME/flutter/bin/flutter" ]; then
+            rm -rf "$HOME/flutter"
+            git clone --depth 1 --branch "$FLUTTER_VERSION" \
+              https://github.com/flutter/flutter.git "$HOME/flutter"
+          fi
+          # The SDK is a git checkout and the tool shells out to git against it;
+          # a cache restore can leave it owned differently than the runner user,
+          # which git refuses to touch without this.
+          git config --global --add safe.directory "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+ 
+      - name: 🦋 Prime Flutter (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          flutter --version
+          flutter config --enable-linux-desktop
+          # If the linux-arm64 engine artifacts were ever to go missing, this
+          # is the step that would say so, rather than a confusing failure
+          # deep in the CMake build later on.
+          flutter precache --linux
+ 
       - name: Get os dependencies
         run: |
           sudo apt-get update -y
@@ -56,23 +111,23 @@ jobs:
           sudo apt-get install -y g++
           sudo apt-get install -y libstdc++-12-dev || true
           sudo apt-get install -y --no-install-recommends libboost-dev
-
+ 
       - name: Compile libslink
         run: |
           cd third_party/libslink
           CC=clang make shared
-
+ 
       - name: Compile libmseed
         run: |
           cd third_party/libmseed
           CC=clang make shared
-        
+ 
       - name: 📥 Get dependencies
         run: flutter pub get
-
+ 
       #- name: ✅ Run tests
       #  run: flutter test --coverage
-
+ 
       - name: ✅ Run tests
         run: |
           dart run ffigen --config ffigen.yaml
@@ -80,29 +135,34 @@ jobs:
           # server on localhost:18000. Naming the tag rather than listing files
           # means new test files are covered without editing this step.
           flutter test --exclude-tags live
-
+ 
       - name: Build Linux
         run: |
           dart run ffigen --config ffigen.yaml
           flutter build linux --release
-
+ 
       - name: 📦 Prepare artifacts
         run: |
           mkdir -p artifacts
+          # flutter build names the output directory after the target arch, so
+          # this doubles as a check that the arm runner really did produce an
+          # arm64 build rather than silently falling back to x64.
+          out="build/linux/${{ matrix.arch }}/release"
+          test -d "$out/bundle"
           # The executable cannot run on its own - it needs the sibling lib/
           # and data/ directories - so ship the whole bundle as one archive.
           # Rename the bundle first so the archive has a seedlink_viewer/ root
           # and unpacks into one directory instead of scattering lib/, data/
           # and the executable across the current directory.
-          mv build/linux/x64/release/bundle build/linux/x64/release/seedlink_viewer
-          tar -czf artifacts/seedlink_viewer-${{ matrix.os }}-x64.tar.gz \
-            -C build/linux/x64/release seedlink_viewer
-
+          mv "$out/bundle" "$out/seedlink_viewer"
+          tar -czf artifacts/seedlink_viewer-${{ matrix.label }}.tar.gz \
+            -C "$out" seedlink_viewer
+ 
       - name: Upload Ubuntu artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: seedlink_viewer-${{ matrix.os }}-x64
-          path: artifacts/seedlink_viewer-${{ matrix.os }}-x64.tar.gz
+          name: seedlink_viewer-${{ matrix.label }}
+          path: artifacts/seedlink_viewer-${{ matrix.label }}.tar.gz
           # Upload the tarball as-is. The default wraps whatever it is given in
           # a zip, which would mean unzipping to get at the .tar.gz. Only a
           # single file may be uploaded when this is false.
