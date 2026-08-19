@@ -15,6 +15,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FLUTTER_VERSION: 3.47.0
+
 jobs:
   build_and_release_linux:
     name: linux (${{ matrix.label }})
