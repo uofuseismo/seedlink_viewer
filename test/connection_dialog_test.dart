@@ -71,12 +71,12 @@ void main() {
     testWidgets('ticking TLS moves to the secure port', (tester) async {
       await pumpDialog(tester);
 
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       expect(find.text('18500'), findsOneWidget);
 
       // ... and back again when unticked
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       expect(find.text('18000'), findsOneWidget);
     });
@@ -88,7 +88,7 @@ void main() {
       await tester.enterText(fieldLabelled('Port'), '9999');
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
 
       expect(find.text('9999'), findsOneWidget);
@@ -185,7 +185,7 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Answered: RM106'), findsOneWidget);
+      expect(find.text('Received response from RM106'), findsOneWidget);
     });
 
     testWidgets('reports a server that will not answer', (tester) async {
@@ -226,30 +226,33 @@ void main() {
       await tester.enterText(fieldLabelled('Host'), 'localhost');
       await tester.tap(find.widgetWithText(OutlinedButton, 'Test'));
       await tester.pumpAndSettle();
-      expect(find.text('Answered: RM106'), findsOneWidget);
+      expect(find.text('Received response from RM106'), findsOneWidget);
 
       // The result described the old address, so it must not linger
       await tester.enterText(fieldLabelled('Host'), 'elsewhere');
       await tester.pumpAndSettle();
-      expect(find.text('Answered: RM106'), findsNothing);
+      expect(find.text('Received response from RM106'), findsNothing);
     });
   });
 
   group('certificates', () {
     testWidgets('are only asked about when TLS is on', (tester) async {
       await pumpDialog(tester);
-      expect(find.text('System certificates'), findsNothing);
+      expect(find.text('System store'), findsNothing);
 
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
-      expect(find.text('System certificates'), findsOneWidget);
+      expect(find.text('System store'), findsOneWidget);
       expect(find.widgetWithText(OutlinedButton, 'Browse...'), findsOneWidget);
+      // Labelled for what it decides, not for what it holds: a bare path
+      // reads as the user's own credential rather than as who to believe.
+      expect(find.text('Trust certificates from:'), findsOneWidget);
     });
 
     testWidgets('default to the system store', (tester) async {
       final holder = await pumpDialog(tester);
       await tester.enterText(fieldLabelled('Host'), 'localhost');
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
       await tester.pumpAndSettle();
@@ -268,14 +271,14 @@ void main() {
           return '/srv/my-ca';
         },
       );
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(OutlinedButton, 'Browse...'));
       await tester.pumpAndSettle();
 
       expect(openedAt, defaultCertificateDirectory());
       expect(find.text('/srv/my-ca'), findsOneWidget);
-      expect(find.text('System certificates'), findsNothing);
+      expect(find.text('System store'), findsNothing);
     });
 
     testWidgets('a chosen directory is saved with the profile', (tester) async {
@@ -284,7 +287,7 @@ void main() {
         directoryPicker: ({String? initialDirectory}) async => '/srv/my-ca',
       );
       await tester.enterText(fieldLabelled('Host'), 'localhost');
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(OutlinedButton, 'Browse...'));
       await tester.pumpAndSettle();
@@ -299,12 +302,12 @@ void main() {
         tester,
         directoryPicker: ({String? initialDirectory}) async => null,
       );
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(OutlinedButton, 'Browse...'));
       await tester.pumpAndSettle();
 
-      expect(find.text('System certificates'), findsOneWidget);
+      expect(find.text('System store'), findsOneWidget);
     });
 
     testWidgets('clearing goes back to the system store', (tester) async {
@@ -312,7 +315,7 @@ void main() {
         tester,
         directoryPicker: ({String? initialDirectory}) async => '/srv/my-ca',
       );
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(OutlinedButton, 'Browse...'));
       await tester.pumpAndSettle();
@@ -320,7 +323,7 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.clear));
       await tester.pumpAndSettle();
-      expect(find.text('System certificates'), findsOneWidget);
+      expect(find.text('System store'), findsOneWidget);
     });
 
     testWidgets('turning TLS off forgets the certificate', (tester) async {
@@ -329,12 +332,12 @@ void main() {
         directoryPicker: ({String? initialDirectory}) async => '/srv/my-ca',
       );
       await tester.enterText(fieldLabelled('Host'), 'localhost');
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(OutlinedButton, 'Browse...'));
       await tester.pumpAndSettle();
       // Changed their mind about TLS entirely
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
       await tester.pumpAndSettle();
@@ -361,7 +364,7 @@ void main() {
             },
       );
       await tester.enterText(fieldLabelled('Host'), 'localhost');
-      await tester.tap(find.text('Use TLS'));
+      await tester.tap(find.text('Use Certificates'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(OutlinedButton, 'Browse...'));
       await tester.pumpAndSettle();

@@ -338,46 +338,66 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
 
   /// Chooses which certificates to trust.  Empty means the system store,
   /// which libslink finds by itself and is what most servers need.
+  /// Which authority vouches for the server.
+  ///
+  /// Labelled for what it decides rather than for what it holds. A path to a
+  /// certificate invites the reading that it is the user's own credential -
+  /// the thing that gets them in - when it is the opposite: it says who this
+  /// machine will believe when the server proves who it is. Client
+  /// certificates are a different thing again and are not supported.
   Widget _buildCertificateRow(BuildContext context) {
     final chosen = _certificatePath.isEmpty
-        ? 'System certificates'
+        ? 'System store'
         : _certificatePath;
     return Padding(
       padding: const EdgeInsets.only(left: 8, bottom: 4),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Tooltip(
-              message: _certificatePath.isEmpty
-                  ? 'Using the certificates already trusted by this machine. '
-                        'Choose a directory only if your server uses a private '
-                        'certificate authority.'
-                  : 'Trusting the certificates in $_certificatePath',
-              child: Text(
-                chosen,
-                style: Theme.of(context).textTheme.bodySmall,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
+          // Above rather than beside: a path is long, and squeezing a caption
+          // in next to one leaves no room for either.
+          Text(
+            'Trust certificates from:',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
-          const SizedBox(width: 8),
-          Tooltip(
-            message: 'Choose a directory of CA certificates to trust.',
-            child: OutlinedButton(
-              onPressed: _chooseCertificateDirectory,
-              child: const Text('Browse...'),
-            ),
-          ),
-          if (_certificatePath.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            Tooltip(
-              message: 'Go back to the system certificates.',
-              child: IconButton(
-                icon: const Icon(Icons.clear),
-                onPressed: () => setState(() => _certificatePath = ''),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Tooltip(
+                  message: _certificatePath.isEmpty
+                      ? 'The certificates already trusted by this machine. These '
+                            'cover public servers; point this at your own '
+                            'authority for a private one.'
+                      : 'Believing any server vouched for by the certificates in '
+                            '$_certificatePath',
+                  child: Text(
+                    chosen,
+                    style: Theme.of(context).textTheme.bodySmall,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Choose the authority that vouches for your server.',
+                child: OutlinedButton(
+                  onPressed: _chooseCertificateDirectory,
+                  child: const Text('Browse...'),
+                ),
+              ),
+              if (_certificatePath.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: 'Go back to the system store.',
+                  child: IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () => setState(() => _certificatePath = ''),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );
