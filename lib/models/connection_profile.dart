@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart' show ListEquality;
+import './ssh_tunnel_config.dart';
 import './stream_identifier.dart';
 
 /// The default SEEDLink port for an unencrypted connection.
@@ -41,6 +42,14 @@ class ConnectionProfile {
   /// of the window.
   final List<StreamIdentifier> streams;
 
+  /// How to reach the server, when it cannot be reached from here directly.
+  ///
+  /// Null means a direct connection, which is also what an older saved profile
+  /// means by leaving it out.  When it is set, [host] and [port] are read from
+  /// the SSH host rather than from this machine - usually localhost:18000,
+  /// because the server is normally on the box being logged in to.
+  final SshTunnelConfig? tunnel;
+
   ConnectionProfile({
     required this.name,
     required this.host,
@@ -48,6 +57,7 @@ class ConnectionProfile {
     this.useTLS = false,
     this.certificatePath = '',
     List<StreamIdentifier> streams = const <StreamIdentifier>[],
+    this.tunnel,
   }) : streams = List<StreamIdentifier>.unmodifiable(streams) {
     if (name.trim().isEmpty) {
       throw const FormatException('A profile needs a name');
@@ -62,7 +72,17 @@ class ConnectionProfile {
 
   /// The address as SEEDLink spells it, and the name a profile takes when the
   /// user does not supply one.
-  String get address => '$host:$port';
+  ///
+  /// A tunnelled profile says so, because localhost:18000 on its own would
+  /// name a server on the user's own machine and there is usually not one.
+  String get address =>
+      tunnel == null ? '$host:$port' : '$host:$port via ${tunnel!.address}';
+
+  /// The address the SSH host knows the server by, without the tunnel on it.
+  String get remoteAddress => '$host:$port';
+
+  /// Whether reaching this server means opening a tunnel first.
+  bool get isTunnelled => tunnel != null;
 
   /// Drops the saved streams this server is no longer offering.
   ///
@@ -86,6 +106,10 @@ class ConnectionProfile {
     bool? useTLS,
     String? certificatePath,
     List<StreamIdentifier>? streams,
+    SshTunnelConfig? tunnel,
+    // Passing tunnel: null means "leave it alone" like every other argument
+    // here, so dropping one has to be asked for.
+    bool dropTunnel = false,
   }) {
     return ConnectionProfile(
       name: name ?? this.name,
@@ -94,6 +118,7 @@ class ConnectionProfile {
       useTLS: useTLS ?? this.useTLS,
       certificatePath: certificatePath ?? this.certificatePath,
       streams: streams ?? this.streams,
+      tunnel: dropTunnel ? null : (tunnel ?? this.tunnel),
     );
   }
 
@@ -105,6 +130,9 @@ class ConnectionProfile {
       'useTLS': useTLS,
       'certificatePath': certificatePath,
       'streams': streams.map((stream) => stream.toString()).toList(),
+      // Left out entirely when there is no tunnel, so a direct profile is
+      // written exactly as it was before tunnels existed.
+      if (tunnel != null) 'tunnel': tunnel!.toJson(),
     };
   }
 
@@ -134,6 +162,16 @@ class ConnectionProfile {
     if (streams is! List) {
       throw const FormatException('streams must be a list');
     }
+    // Absent means direct, which is what every profile written before tunnels
+    // existed says.
+    final tunnelJson = json['tunnel'];
+    SshTunnelConfig? tunnel;
+    if (tunnelJson != null) {
+      if (tunnelJson is! Map<String, Object?>) {
+        throw const FormatException('tunnel must be an object');
+      }
+      tunnel = SshTunnelConfig.fromJson(tunnelJson);
+    }
     return ConnectionProfile(
       name: name,
       host: host,
@@ -146,6 +184,7 @@ class ConnectionProfile {
         }
         return StreamIdentifier.fromString(stream);
       }).toList(),
+      tunnel: tunnel,
     );
   }
 
@@ -159,6 +198,7 @@ class ConnectionProfile {
         other.host == host &&
         other.port == port &&
         other.useTLS == useTLS &&
+        other.tunnel == tunnel &&
         other.certificatePath == certificatePath &&
         const ListEquality<StreamIdentifier>().equals(other.streams, streams);
   }
@@ -171,5 +211,6 @@ class ConnectionProfile {
     useTLS,
     certificatePath,
     Object.hashAll(streams),
+    tunnel,
   );
 }

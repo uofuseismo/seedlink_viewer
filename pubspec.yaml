@@ -45,6 +45,9 @@ dependencies:
   path_provider: ^2.1.5
   # Native directory picker for choosing a CA certificate location.
   file_selector: ^1.0.3
+  # SSH port forwarding, for reaching a server that is only visible from a
+  # jump host.  Pure dart, so it needs no toolchain of its own.
+  dartssh2: ^3.3.1
 
   material_ui: any
 dev_dependencies:

@@ -1,8 +1,10 @@
-import 'dart:io' show Directory;
-import 'package:file_selector/file_selector.dart' show getDirectoryPath;
+import 'dart:io' show Directory, Platform;
+import 'package:file_selector/file_selector.dart'
+    show XTypeGroup, getDirectoryPath, openFile;
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 import 'package:material_ui/material_ui.dart';
 import '../models/connection_profile.dart';
+import '../models/ssh_tunnel_config.dart';
 import '../services/seedlink_session.dart';
 
 /// Checks a server is reachable.  Injectable so tests need no server.
@@ -17,6 +19,36 @@ typedef ServerTester =
 /// Chooses a directory.  Injectable so tests need no file chooser.
 typedef DirectoryPicker =
     Future<String?> Function({String? initialDirectory});
+
+/// Chooses a file.  Injectable for the same reason.
+typedef FilePicker = Future<String?> Function({String? initialDirectory});
+
+/// Where ssh keeps its keys, if that directory is there.
+///
+/// Opening the chooser here puts the user on top of the key they already use
+/// rather than in their home directory looking for a hidden folder.
+String? defaultSshDirectory() {
+  final home = Platform.environment['HOME'] ??
+      Platform.environment['USERPROFILE'];
+  if (home == null || home.isEmpty) {
+    return null;
+  }
+  final ssh = '$home${Platform.pathSeparator}.ssh';
+  return Directory(ssh).existsSync() ? ssh : null;
+}
+
+/// The real file chooser, filtered to the things a private key looks like.
+Future<String?> openPrivateKeyFile({String? initialDirectory}) async {
+  final file = await openFile(
+    initialDirectory: initialDirectory,
+    acceptedTypeGroups: const [
+      // Keys usually have no extension at all, so this cannot be narrowed
+      // without hiding the very file being looked for.
+      XTypeGroup(label: 'Private keys'),
+    ],
+  );
+  return file?.path;
+}
 
 /// Where certificate authority certificates usually live.
 ///
@@ -69,6 +101,7 @@ Future<ConnectionRequest?> showConnectionDialog(
   Set<String> takenNames = const <String>{},
   ServerTester? tester,
   DirectoryPicker? directoryPicker,
+  FilePicker? filePicker,
 }) {
   return showDialog<ConnectionRequest>(
     context: context,
@@ -77,6 +110,7 @@ Future<ConnectionRequest?> showConnectionDialog(
       takenNames: takenNames,
       tester: tester,
       directoryPicker: directoryPicker,
+      filePicker: filePicker,
     ),
   );
 }
@@ -92,12 +126,16 @@ class ConnectionDialog extends StatefulWidget {
 
   final DirectoryPicker? directoryPicker;
 
+  /// Chooses the private key.  Injectable so tests need no file chooser.
+  final FilePicker? filePicker;
+
   const ConnectionDialog({
     super.key,
     this.existing,
     this.takenNames = const <String>{},
     this.tester,
     this.directoryPicker,
+    this.filePicker,
   });
 
   bool get isEditing => existing != null;
@@ -115,6 +153,20 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
 
   late bool _useTLS;
   late bool _save;
+
+  /// True while the SSH tunnel tab is the one showing.
+  ///
+  /// Which tab is open is what decides whether the saved profile carries a
+  /// tunnel, so this is the setting rather than a view of one.  A checkbox
+  /// would have been smaller, but Host means "reachable from here" on one tab
+  /// and "reachable from the SSH host" on the other, and a control that
+  /// silently changes what a field means is how the port confusion started.
+  late bool _tunnelled;
+
+  late final TextEditingController _sshHost;
+  late final TextEditingController _sshPort;
+  late final TextEditingController _sshUser;
+  late final TextEditingController _privateKeyPath;
 
   /// A CA certificate directory or bundle, or empty for the system store.
   late String _certificatePath;
@@ -134,6 +186,16 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
       text: '${existing?.port ?? defaultSeedLinkPort}',
     );
     _name = TextEditingController(text: existing?.name ?? '');
+    final tunnel = existing?.tunnel;
+    _tunnelled = tunnel != null;
+    _sshHost = TextEditingController(text: tunnel?.sshHost ?? '');
+    _sshPort = TextEditingController(
+      text: '${tunnel?.sshPort ?? defaultSshPort}',
+    );
+    _sshUser = TextEditingController(text: tunnel?.user ?? '');
+    _privateKeyPath = TextEditingController(
+      text: tunnel?.privateKeyPath ?? '',
+    );
     _useTLS = existing?.useTLS ?? false;
     _certificatePath = existing?.certificatePath ?? '';
     // Editing an existing profile always writes back; creating is opt in.
@@ -149,6 +211,10 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
     _host.dispose();
     _port.dispose();
     _name.dispose();
+    _sshHost.dispose();
+    _sshPort.dispose();
+    _sshUser.dispose();
+    _privateKeyPath.dispose();
     super.dispose();
   }
 
@@ -181,6 +247,29 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
       if (wasDefault) {
         _port.text =
             '${_useTLS ? defaultSecureSeedLinkPort : defaultSeedLinkPort}';
+      }
+    });
+  }
+
+  /// The tunnel as typed.  Only asked for while the tunnel tab is showing.
+  SshTunnelConfig get _tunnelConfig => SshTunnelConfig(
+    sshHost: _sshHost.text.trim(),
+    sshPort: int.tryParse(_sshPort.text.trim()) ?? defaultSshPort,
+    user: _sshUser.text.trim(),
+    privateKeyPath: _privateKeyPath.text.trim(),
+  );
+
+  /// Moving between Direct and SSH tunnel changes where Host points, so a Test
+  /// run against the old meaning no longer describes anything.
+  void _onTabChanged(int index) {
+    setState(() {
+      _tunnelled = index == 1;
+      _testResult = null;
+      _testError = null;
+      // The server is normally on the box being logged in to, and a blank
+      // Host on this tab is the commonest thing to get wrong.
+      if (_tunnelled && _host.text.trim().isEmpty) {
+        _host.text = 'localhost';
       }
     });
   }
@@ -235,6 +324,9 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
       certificatePath: _useTLS ? _certificatePath : '',
       // Editing keeps the streams the profile already remembers
       streams: existing?.streams ?? const [],
+      // Which tab is showing decides this.  Switching back to Direct drops the
+      // tunnel rather than saving one nothing will open.
+      tunnel: _tunnelled ? _tunnelConfig : null,
     );
     Navigator.of(context).pop(
       ConnectionRequest(
@@ -252,7 +344,7 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
         widget.isEditing ? 'Edit ${widget.existing!.name}' : 'New Connection',
       ),
       content: SizedBox(
-        width: 420,
+        width: 460,
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
@@ -260,6 +352,20 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                _buildRouteTabs(context),
+                const SizedBox(height: 16),
+                if (_tunnelled) ...[
+                  _buildTunnelFields(context),
+                  const Divider(height: 24),
+                  // Said out loud because it is the one thing on this tab that
+                  // is easy to get wrong: this is the server as the SSH host
+                  // sees it, not as this machine does.
+                  Text(
+                    'SEEDLink server, as seen from the SSH host',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 _buildHostField(),
                 const SizedBox(height: 12),
                 _buildPortField(),
@@ -277,6 +383,156 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
       ),
       actions: _buildActions(context),
     );
+  }
+
+  /// Direct or through an SSH tunnel.
+  ///
+  /// Tabs rather than a checkbox because the two routes do not share a
+  /// vocabulary: on Direct, Host is reachable from this machine; on SSH
+  /// tunnel, it is reachable from the SSH host and is usually localhost.
+  Widget _buildRouteTabs(BuildContext context) {
+    return SegmentedButton<bool>(
+      segments: const [
+        ButtonSegment<bool>(
+          value: false,
+          label: Text('Direct'),
+          icon: Icon(Icons.arrow_forward, size: 16),
+        ),
+        ButtonSegment<bool>(
+          value: true,
+          label: Text('SSH tunnel'),
+          icon: Icon(Icons.vpn_key, size: 16),
+        ),
+      ],
+      selected: {_tunnelled},
+      onSelectionChanged: (selection) =>
+          _onTabChanged(selection.first ? 1 : 0),
+    );
+  }
+
+  /// Everything needed to log in to the machine that can see the server.
+  ///
+  /// Four fields, three of which usually answer themselves. There is no
+  /// passphrase here on purpose: an encrypted key says so when it is read, and
+  /// is asked about then. There is no local port either - the tunnel takes
+  /// whatever the operating system gives it.
+  Widget _buildTunnelFields(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 3,
+              child: Tooltip(
+                message: 'The machine to log in to - the one that can reach '
+                    'the SEEDLink server. Not the server itself.',
+                child: TextFormField(
+                  controller: _sshHost,
+                  decoration: const InputDecoration(
+                    labelText: 'SSH host',
+                    hintText: 'jump.example.org',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  validator: (value) => (!_tunnelled ||
+                          (value ?? '').trim().isNotEmpty)
+                      ? null
+                      : 'Enter the host to tunnel through',
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Tooltip(
+                message: 'The port sshd listens on. $defaultSshPort unless '
+                    'someone has moved it.',
+                child: TextFormField(
+                  controller: _sshPort,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    labelText: 'Port',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  validator: (value) {
+                    if (!_tunnelled) {
+                      return null;
+                    }
+                    final port = int.tryParse((value ?? '').trim());
+                    return (port == null || port < 1 || port > 65535)
+                        ? '1-65535'
+                        : null;
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Tooltip(
+          message: 'The account to log in as on the SSH host.',
+          child: TextFormField(
+            controller: _sshUser,
+            decoration: const InputDecoration(
+              labelText: 'User',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            validator: (value) =>
+                (!_tunnelled || (value ?? '').trim().isNotEmpty)
+                ? null
+                : 'Enter the user to log in as',
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Tooltip(
+                message: 'The key you already use for this host. If it is '
+                    'protected by a passphrase you will be asked for it when '
+                    'connecting - it is never saved.',
+                child: TextFormField(
+                  controller: _privateKeyPath,
+                  decoration: const InputDecoration(
+                    labelText: 'Private key',
+                    hintText: '~/.ssh/id_ed25519',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  validator: (value) =>
+                      (!_tunnelled || (value ?? '').trim().isNotEmpty)
+                      ? null
+                      : 'Choose the private key to log in with',
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Tooltip(
+                message: 'Find the private key.',
+                child: OutlinedButton(
+                  onPressed: _choosePrivateKey,
+                  child: const Text('Browse...'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _choosePrivateKey() async {
+    final picker = widget.filePicker ?? openPrivateKeyFile;
+    final chosen = await picker(initialDirectory: defaultSshDirectory());
+    if (chosen != null && mounted) {
+      setState(() => _privateKeyPath.text = chosen);
+    }
   }
 
   Widget _buildHostField() {

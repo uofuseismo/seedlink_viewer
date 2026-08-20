@@ -5,12 +5,14 @@ import './models/plot_timing.dart';
 import './models/stream_identifier.dart';
 import './services/logging.dart';
 import './services/profile_store.dart';
+import './services/ssh_tunnel.dart';
 import './services/seedlink_packet_reader.dart';
 import './services/seedlink_session.dart';
 import './services/stream_source.dart';
 import './views/app_menu_bar.dart';
 import './views/connection_dialog.dart';
 import './views/multi_stream_painter.dart';
+import './views/passphrase_dialog.dart';
 import './views/plot_duration_selector.dart';
 import './views/plot_options_dialog.dart';
 import './views/stream_selector_dialog.dart';
@@ -61,6 +63,11 @@ class MyApp extends StatelessWidget {
   /// Checks a server is reachable.  Injectable so tests need no server.
   final ServerTester? serverTester;
 
+  /// Opens an SSH tunnel.  Injectable so tests need no SSH server - which is
+  /// the whole reason the tunnel is reached through a function rather than
+  /// built where it is used.
+  final TunnelOpener? tunnelOpener;
+
   /// Builds the source used to query a server for its streams.  Injectable
   /// for the same reason.
   final StreamSource Function(ConnectionProfile)? streamSourceBuilder;
@@ -69,6 +76,7 @@ class MyApp extends StatelessWidget {
     super.key,
     this.profileStore,
     this.serverTester,
+    this.tunnelOpener,
     this.streamSourceBuilder,
   });
 
@@ -81,6 +89,7 @@ class MyApp extends StatelessWidget {
       home: SeedLinkViewerHome(
         profileStore: profileStore,
         serverTester: serverTester,
+        tunnelOpener: tunnelOpener,
         streamSourceBuilder: streamSourceBuilder,
       ),
     );
@@ -91,12 +100,14 @@ class MyApp extends StatelessWidget {
 class SeedLinkViewerHome extends StatefulWidget {
   final ProfileStore? profileStore;
   final ServerTester? serverTester;
+  final TunnelOpener? tunnelOpener;
   final StreamSource Function(ConnectionProfile)? streamSourceBuilder;
 
   const SeedLinkViewerHome({
     super.key,
     this.profileStore,
     this.serverTester,
+    this.tunnelOpener,
     this.streamSourceBuilder,
   });
 
@@ -164,17 +175,100 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
     }
   }
 
-  StreamSource _sourceFor(ConnectionProfile profile) {
+  /// Where the stream selector should re-query, for a connection that is
+  /// already up.
+  ///
+  /// The tunnel is already open, so this reuses it rather than dialling the
+  /// far address directly - which from here would not resolve.
+  _Endpoint _connectedEndpoint(ConnectionProfile profile) {
+    final tunnel = _tunnel;
+    return tunnel == null
+        ? _Endpoint(profile.host, profile.port)
+        : _Endpoint('127.0.0.1', tunnel.localPort);
+  }
+
+  /// The tunnel the active connection is running through, if any.
+  ///
+  /// Held so it can be closed on disconnect.  Only one is ever open: there is
+  /// only ever one active connection.
+  Tunnel? _tunnel;
+
+  StreamSource _sourceFor(ConnectionProfile profile, _Endpoint endpoint) {
     final builder = widget.streamSourceBuilder;
     if (builder != null) {
       return builder(profile);
     }
     return SeedLinkStreamSource(
-      host: profile.host,
-      port: profile.port,
+      host: endpoint.host,
+      port: endpoint.port,
       useTLS: profile.useTLS,
       certificatePath: profile.certificatePath,
     );
+  }
+
+  /// Where to actually dial for a profile.
+  ///
+  /// A direct profile is its own address.  A tunnelled one is reached at the
+  /// near end of the tunnel, which is on loopback at whatever port the
+  /// operating system handed out - the profile's own host and port describe
+  /// the far end and are what the tunnel was told to forward to.
+  ///
+  /// Returns null when a tunnel was needed and could not be opened, having
+  /// already said why.
+  Future<_Endpoint?> _reach(ConnectionProfile profile) async {
+    final tunnel = profile.tunnel;
+    if (tunnel == null) {
+      return _Endpoint(profile.host, profile.port);
+    }
+    // A stream source has been injected, so there is no real server and no
+    // real tunnel to reach it through.
+    if (widget.streamSourceBuilder != null && widget.tunnelOpener == null) {
+      return _Endpoint(profile.host, profile.port);
+    }
+    final opener = widget.tunnelOpener ?? openSshTunnel;
+    try {
+      final opened = await opener(
+        config: tunnel,
+        remoteHost: profile.host,
+        remotePort: profile.port,
+        onPassphrase: _askForPassphrase,
+      );
+      _tunnel = opened;
+      return _Endpoint('127.0.0.1', opened.localPort);
+    } on SshTunnelCancelled {
+      // Not a failure - the user closed the passphrase prompt.
+      return null;
+    } catch (e) {
+      _report('Could not open the tunnel to ${tunnel.address}: $e',
+          isError: true);
+      return null;
+    }
+  }
+
+  /// Asked only when a key turns out to be encrypted.
+  Future<String?> _askForPassphrase({
+    required String keyPath,
+    required bool retry,
+  }) async {
+    if (!mounted) {
+      return null;
+    }
+    return showPassphrasePrompt(context, keyPath: keyPath, retry: retry);
+  }
+
+  Future<void> _closeTunnel() async {
+    final tunnel = _tunnel;
+    _tunnel = null;
+    if (tunnel == null) {
+      return;
+    }
+    try {
+      await tunnel.close();
+    } catch (e) {
+      // Nothing useful to do about a tunnel that will not shut politely; the
+      // process going away closes it regardless.
+      _report('The tunnel did not close cleanly: $e', isError: true);
+    }
   }
 
   void _report(String message, {bool isError = false}) {
@@ -197,15 +291,23 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
   /// server is actually offering.  Anything it no longer carries is dropped -
   /// the user can add it again if it comes back.
   Future<void> _connect(ConnectionProfile profile) async {
-    final source = _sourceFor(profile);
+    // Whatever was open belongs to the connection being replaced.
+    await _closeTunnel();
+    final endpoint = await _reach(profile);
+    if (endpoint == null || !mounted) {
+      return;
+    }
+    final source = _sourceFor(profile, endpoint);
     List<StreamIdentifier> available;
     try {
       available = await source.fetchStreams();
     } catch (e) {
       _report('Could not connect to ${profile.address}: $e', isError: true);
+      await _closeTunnel();
       return;
     }
     if (!mounted) {
+      await _closeTunnel();
       return;
     }
     final reconciled = profile.reconcile(available);
@@ -213,7 +315,7 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
       _active = profile;
       _selected = reconciled.kept;
     });
-    await _startReader(profile);
+    await _startReader(profile, endpoint);
     if (reconciled.droppedAnything) {
       final names = reconciled.dropped.map((s) => '$s').join(', ');
       _report(
@@ -233,7 +335,7 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
   ///
   /// Skipped when a stream source has been injected, because then there is no
   /// real server to read from.
-  Future<void> _startReader(ConnectionProfile profile) async {
+  Future<void> _startReader(ConnectionProfile profile, _Endpoint endpoint) async {
     await _reader?.stop();
     _reader = null;
     if (widget.streamSourceBuilder != null) {
@@ -241,8 +343,8 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
     }
     try {
       final reader = await SeedLinkPacketReader.start(
-        host: profile.host,
-        port: profile.port,
+        host: endpoint.host,
+        port: endpoint.port,
         useTLS: profile.useTLS,
         certificatePath: profile.certificatePath,
         streams: _selected,
@@ -260,6 +362,8 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
 
   Future<void> _disconnect() async {
     await _reader?.stop();
+    // After the reader, which is the thing using it.
+    await _closeTunnel();
     setState(() {
       _active = null;
       _selected = <StreamIdentifier>[];
@@ -371,7 +475,7 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
     }
     final chosen = await showStreamSelector(
       context,
-      source: _sourceFor(active),
+      source: _sourceFor(active, _connectedEndpoint(active)),
       initialSelection: _selected,
     );
     if (chosen != null && mounted) {
@@ -551,4 +655,15 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
     );
   }
+}
+
+/// Where to actually dial.
+///
+/// Not the same thing as a profile's own host and port once a tunnel is
+/// involved: those describe the server as the SSH host sees it, and this is
+/// the near end of the tunnel that reaches it.
+class _Endpoint {
+  final String host;
+  final int port;
+  const _Endpoint(this.host, this.port);
 }

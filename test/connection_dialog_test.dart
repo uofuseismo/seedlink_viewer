@@ -2,6 +2,7 @@ import 'dart:io' show Directory;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:seedlink_viewer/models/connection_profile.dart';
+import 'package:seedlink_viewer/models/ssh_tunnel_config.dart';
 import 'package:seedlink_viewer/models/stream_identifier.dart';
 import 'package:seedlink_viewer/views/connection_dialog.dart';
 
@@ -29,6 +30,7 @@ Future<ResultHolder> pumpDialog(
   Set<String> takenNames = const <String>{},
   ServerTester? serverTester,
   DirectoryPicker? directoryPicker,
+  FilePicker? filePicker,
 }) async {
   final holder = ResultHolder();
   await tester.pumpWidget(
@@ -43,6 +45,7 @@ Future<ResultHolder> pumpDialog(
                 takenNames: takenNames,
                 tester: serverTester ?? answering('RM106'),
                 directoryPicker: directoryPicker,
+                filePicker: filePicker,
               );
             },
             child: const Text('open'),
@@ -59,7 +62,183 @@ Future<ResultHolder> pumpDialog(
 Finder fieldLabelled(String label) =>
     find.ancestor(of: find.text(label), matching: find.byType(TextFormField));
 
+/// What a field actually contains.
+///
+/// find.text would also match the hint, which InputDecorator keeps in the tree
+/// behind the value rather than removing.
+String fieldText(WidgetTester tester, String label) => tester
+    .widget<EditableText>(
+      find.descendant(
+        of: fieldLabelled(label),
+        matching: find.byType(EditableText),
+      ),
+    )
+    .controller
+    .text;
+
+/// Moves to the SSH tunnel tab.
+Future<void> chooseTunnel(WidgetTester tester) async {
+  await tester.tap(find.text('SSH tunnel'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> chooseDirect(WidgetTester tester) async {
+  await tester.tap(find.text('Direct'));
+  await tester.pumpAndSettle();
+}
+
+/// Fills in a complete, valid tunnel.
+Future<void> fillTunnel(
+  WidgetTester tester, {
+  String sshHost = 'jump.example.org',
+  String user = 'bbaker',
+  String key = '/home/bbaker/.ssh/id_ed25519',
+}) async {
+  await tester.enterText(fieldLabelled('SSH host'), sshHost);
+  await tester.enterText(fieldLabelled('User'), user);
+  await tester.enterText(fieldLabelled('Private key'), key);
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  group('the route', () {
+    testWidgets('starts Direct, and says nothing about ssh', (tester) async {
+      await pumpDialog(tester);
+
+      expect(find.text('Direct'), findsOneWidget);
+      expect(find.text('SSH tunnel'), findsOneWidget);
+      // Closed by default: most connections do not go through a jump host.
+      expect(fieldLabelled('SSH host'), findsNothing);
+      expect(fieldLabelled('User'), findsNothing);
+    });
+
+    testWidgets('the tunnel tab asks for four things and no more', (
+      tester,
+    ) async {
+      await pumpDialog(tester);
+      await chooseTunnel(tester);
+
+      expect(fieldLabelled('SSH host'), findsOneWidget);
+      expect(fieldLabelled('User'), findsOneWidget);
+      expect(fieldLabelled('Private key'), findsOneWidget);
+
+      // Neither of these is the user's business: the passphrase is asked for
+      // only if the key turns out to need one, and the local port is whatever
+      // the operating system hands out.
+      expect(find.textContaining('Passphrase'), findsNothing);
+      expect(find.textContaining('Local port'), findsNothing);
+    });
+
+    testWidgets('it says whose view of the server it is asking for', (
+      tester,
+    ) async {
+      await pumpDialog(tester);
+      await chooseTunnel(tester);
+
+      // The one thing that is easy to get wrong on this tab.
+      expect(
+        find.text('SEEDLink server, as seen from the SSH host'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('and fills the usual answer in', (tester) async {
+      await pumpDialog(tester);
+      await chooseTunnel(tester);
+
+      // The server is normally on the box being logged in to.
+      expect(fieldText(tester, 'Host'), 'localhost');
+    });
+
+    testWidgets('an existing tunnelled profile opens on the right tab', (
+      tester,
+    ) async {
+      await pumpDialog(
+        tester,
+        existing: ConnectionProfile(
+          name: 'Behind the jump host',
+          host: 'localhost',
+          tunnel: const SshTunnelConfig(
+            sshHost: 'jump.example.org',
+            user: 'bbaker',
+            privateKeyPath: '/home/bbaker/.ssh/id_ed25519',
+          ),
+        ),
+      );
+
+      expect(fieldLabelled('SSH host'), findsOneWidget);
+      expect(fieldText(tester, 'SSH host'), 'jump.example.org');
+      expect(fieldText(tester, 'User'), 'bbaker');
+    });
+  });
+
+  group('saving a tunnelled connection', () {
+    testWidgets('carries the tunnel', (tester) async {
+      final holder = await pumpDialog(tester);
+      await chooseTunnel(tester);
+      await fillTunnel(tester);
+      await tester.enterText(fieldLabelled('Host'), 'localhost');
+      await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+      await tester.pumpAndSettle();
+
+      final tunnel = holder.value!.profile.tunnel!;
+      expect(tunnel.sshHost, 'jump.example.org');
+      expect(tunnel.user, 'bbaker');
+      expect(tunnel.privateKeyPath, '/home/bbaker/.ssh/id_ed25519');
+      expect(tunnel.sshPort, 22, reason: 'left alone means the usual one');
+      // The profile's own address is still the far end, for the tunnel to be
+      // pointed at.
+      expect(holder.value!.profile.host, 'localhost');
+      expect(holder.value!.profile.port, 18000);
+    });
+
+    testWidgets('a half filled tunnel is refused rather than saved', (
+      tester,
+    ) async {
+      final holder = await pumpDialog(tester);
+      await chooseTunnel(tester);
+      await tester.enterText(fieldLabelled('SSH host'), 'jump.example.org');
+      await tester.enterText(fieldLabelled('Host'), 'localhost');
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+      await tester.pumpAndSettle();
+
+      expect(holder.value, isNull, reason: 'should not have closed');
+      expect(find.text('Enter the user to log in as'), findsOneWidget);
+      expect(
+        find.text('Choose the private key to log in with'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('going back to Direct drops it', (tester) async {
+      final holder = await pumpDialog(tester);
+      await chooseTunnel(tester);
+      await fillTunnel(tester);
+      await chooseDirect(tester);
+      await tester.enterText(fieldLabelled('Host'), 'rtserve.example.org');
+      await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+      await tester.pumpAndSettle();
+
+      // Saving a tunnel nothing will open would be worse than losing what was
+      // typed - the profile would claim a route it does not take.
+      expect(holder.value!.profile.tunnel, isNull);
+    });
+
+    testWidgets('Browse fills the key in', (tester) async {
+      await pumpDialog(
+        tester,
+        filePicker: ({String? initialDirectory}) async =>
+            '/home/bbaker/.ssh/id_rsa',
+      );
+      await chooseTunnel(tester);
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Browse...'));
+      await tester.pumpAndSettle();
+
+      expect(fieldText(tester, 'Private key'), '/home/bbaker/.ssh/id_rsa');
+    });
+  });
+
   group('creating a connection', () {
     testWidgets('defaults to the plain SEEDLink port', (tester) async {
       await pumpDialog(tester);
