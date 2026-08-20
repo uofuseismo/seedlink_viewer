@@ -225,6 +225,32 @@ void main() {
       expect(holder.value!.profile.tunnel, isNull);
     });
 
+    testWidgets('Test is off, and says why', (tester) async {
+      await pumpDialog(tester);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Test'))
+            .onPressed,
+        isNotNull,
+      );
+
+      await chooseTunnel(tester);
+
+      // The address on this tab is the server as the SSH host sees it. Dialling
+      // it from here would either fail confusingly or reach something else
+      // listening locally and report that instead.
+      expect(
+        tester
+            .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Test'))
+            .onPressed,
+        isNull,
+      );
+      expect(
+        find.text('Tested when you connect, through the tunnel.'),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('Browse fills the key in', (tester) async {
       await pumpDialog(
         tester,

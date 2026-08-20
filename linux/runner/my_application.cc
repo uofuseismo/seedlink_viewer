@@ -52,6 +52,11 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "SeedLink Viewer");
   }
 
+  // Resolved from the icon theme by name, so it appears once the icons in
+  // linux/packaging/icons have been installed - see install.sh.  Harmless
+  // before then: GTK just falls back to the default.
+  gtk_window_set_icon_name(window, APPLICATION_ID);
+
   gtk_window_set_default_size(window, 1280, 720);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();

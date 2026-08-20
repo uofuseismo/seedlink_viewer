@@ -671,14 +671,26 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
     }
   }
 
+  /// Asks the server to identify itself, before anything is saved.
+  ///
+  /// Off on the SSH tunnel tab. The address on that tab is the server as the
+  /// SSH host sees it - usually localhost:18000 - and dialling it from here
+  /// would either fail confusingly or, worse, reach something else listening
+  /// on this machine and report that. Testing it honestly means opening the
+  /// tunnel first, which is a login and a passphrase prompt, so it waits for
+  /// Connect rather than pretending to be the cheap check it is on Direct.
   Widget _buildTestRow(BuildContext context) {
     return Row(
       children: [
         Tooltip(
-          message: 'Ask the server to identify itself, without saving or '
-              'connecting. Catches a wrong host or port early.',
+          message: _tunnelled
+              ? 'Not available through a tunnel: this address is the server '
+                    'as the SSH host sees it, so testing it from here would '
+                    'not mean anything. Connect to try it.'
+              : 'Ask the server to identify itself, without saving or '
+                    'connecting. Catches a wrong host or port early.',
           child: OutlinedButton(
-            onPressed: _testing ? null : _test,
+            onPressed: (_testing || _tunnelled) ? null : _test,
             child: const Text('Test'),
           ),
         ),
@@ -689,6 +701,14 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
   }
 
   Widget _buildTestStatus(BuildContext context) {
+    if (_tunnelled) {
+      return Text(
+        'Tested when you connect, through the tunnel.',
+        style: Theme.of(context).textTheme.bodySmall,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
     if (_testing) {
       return const Row(
         children: [

@@ -61,6 +61,9 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   ffigen: ^21.0.0
+  # Generates the per-platform app icons from appIcon/.  Run after changing
+  # them with:  dart run flutter_launcher_icons
+  flutter_launcher_icons: ^0.14.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -117,3 +120,28 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# App icons, generated from the masters in appIcon/ - see appIcon/README.md for
+# what each source file is and how the artwork was made.  These are inputs, not
+# assets: nothing here is bundled into the app at runtime.
+flutter_launcher_icons:
+  image_path: "appIcon/slv_icon_1024.png"
+  android: true
+  # iOS refuses an icon with an alpha channel, and applies its own rounding.
+  ios: true
+  remove_alpha_ios: true
+  adaptive_icon_background: "appIcon/slv_icon_adaptive_background.png"
+  adaptive_icon_foreground: "appIcon/slv_icon_adaptive_foreground.png"
+  adaptive_icon_monochrome: "appIcon/slv_icon_monochrome.png"
+  macos:
+    generate: true
+    image_path: "appIcon/slv_icon_1024.png"
+  windows:
+    generate: true
+    image_path: "appIcon/slv_icon_1024.png"
+    icon_size: 256
+  web:
+    generate: true
+    image_path: "appIcon/slv_icon_1024.png"
+    background_color: "#000000"
+    theme_color: "#BE0000"
