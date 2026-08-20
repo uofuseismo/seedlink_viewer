@@ -1,6 +1,6 @@
-# SEEDLink Viewer
+# SeedLink Viewer
 
-This is a simple utility for visualizing seismic waveforms via the SEEDLink protocol - typically that
+This is a simple utility for visualizing seismic waveforms via the SeedLink protocol - typically that
 means inspecting the contents of a RingServer.  If you want a more feature rich viewer then use 
 [Swarm](https://gitlab.com/seismic-software/swarm/-/releases).
 
