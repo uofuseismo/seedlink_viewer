@@ -328,7 +328,7 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
       child: CheckboxListTile(
         value: _useTLS,
         onChanged: _onTLSChanged,
-        title: const Text('Use TLS'),
+        title: const Text('Use Certificates'),
         controlAffinity: ListTileControlAffinity.leading,
         contentPadding: EdgeInsets.zero,
         dense: true,
