@@ -107,7 +107,6 @@ class ConnectionDialog extends StatefulWidget {
 }
 
 class _ConnectionDialogState extends State<ConnectionDialog> {
-  static const Duration _tooltipDelay = Duration(milliseconds: 200);
 
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _host;
@@ -248,38 +247,35 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return TooltipTheme(
-      data: const TooltipThemeData(waitDuration: _tooltipDelay),
-      child: AlertDialog(
-        title: Text(
-          widget.isEditing ? 'Edit ${widget.existing!.name}' : 'New Connection',
-        ),
-        content: SizedBox(
-          width: 420,
-          child: Form(
-            key: _formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildHostField(),
-                  const SizedBox(height: 12),
-                  _buildPortField(),
-                  const SizedBox(height: 4),
-                  _buildTLSCheckbox(),
-                  if (_useTLS) _buildCertificateRow(context),
-                  const Divider(height: 24),
-                  _buildTestRow(context),
-                  const Divider(height: 24),
-                  _buildSaveControls(),
-                ],
-              ),
+    return AlertDialog(
+      title: Text(
+        widget.isEditing ? 'Edit ${widget.existing!.name}' : 'New Connection',
+      ),
+      content: SizedBox(
+        width: 420,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildHostField(),
+                const SizedBox(height: 12),
+                _buildPortField(),
+                const SizedBox(height: 4),
+                _buildTLSCheckbox(),
+                if (_useTLS) _buildCertificateRow(context),
+                const Divider(height: 24),
+                _buildTestRow(context),
+                const Divider(height: 24),
+                _buildSaveControls(),
+              ],
             ),
           ),
         ),
-        actions: _buildActions(context),
       ),
+      actions: _buildActions(context),
     );
   }
 
@@ -437,7 +433,7 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
     }
     if (_testResult != null) {
       return Text(
-        'Answered: ${_testResult!}',
+        'Received response from ${_testResult!}',
         style: TextStyle(color: scheme.primary),
         maxLines: 2,
         overflow: TextOverflow.ellipsis,

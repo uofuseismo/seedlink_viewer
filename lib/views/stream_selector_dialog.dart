@@ -72,12 +72,16 @@ class _StreamSelectorDialogState extends State<StreamSelectorDialog> {
 
   /// Tooltips default to appearing the instant the mouse lands, which nags on
   /// buttons whose job is already obvious.  Make the mouse settle first.
-  static const Duration _tooltipDelay = Duration(milliseconds: 200);
   final _offeredScroll = ScrollController();
   final _selectedScroll = ScrollController();
 
   final _filterController = TextEditingController();
   final _filterFocus = FocusNode(debugLabel: 'stream filter');
+
+  /// Owns the Add/Remove and arrow key shortcuts.  Held rather than left
+  /// implicit so that clicking a row can take the focus back off the filter
+  /// field, which swallows a bare a or r to stay typeable.
+  final _pickerFocus = FocusNode(debugLabel: 'stream picker');
   RegExp? _filter;
   String? _filterError;
 
@@ -104,6 +108,7 @@ class _StreamSelectorDialogState extends State<StreamSelectorDialog> {
   void dispose() {
     _filterController.dispose();
     _filterFocus.dispose();
+    _pickerFocus.dispose();
     _offeredScroll.dispose();
     _selectedScroll.dispose();
     super.dispose();
@@ -138,6 +143,17 @@ class _StreamSelectorDialogState extends State<StreamSelectorDialog> {
         _filterError = 'Not a valid regular expression';
       }
     });
+  }
+
+  /// Clicking a row picks it and hands the keyboard back to the lists.
+  ///
+  /// Typing in the filter leaves the focus there, and the filter deliberately
+  /// swallows a bare a or r so that names like ARUT stay typeable.  Without
+  /// this, clicking back onto a list left the highlight in one place and the
+  /// keyboard in another: Add and Remove appeared to have stopped working.
+  void _pick(void Function(StreamIdentifier) highlight, StreamIdentifier s) {
+    _pickerFocus.requestFocus();
+    highlight(s);
   }
 
   /// Highlights a row on the left, releasing whatever the right had.
@@ -384,6 +400,7 @@ class _StreamSelectorDialogState extends State<StreamSelectorDialog> {
           ),
         },
         child: Focus(
+          focusNode: _pickerFocus,
           autofocus: true,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -415,7 +432,7 @@ class _StreamSelectorDialogState extends State<StreamSelectorDialog> {
                 return _buildRow(
                   stream: stream,
                   isHighlighted: stream == _offeredHighlight,
-                  onTap: () => _highlightOffered(stream),
+                  onTap: () => _pick(_highlightOffered, stream),
                 );
               },
             ),
@@ -439,7 +456,7 @@ class _StreamSelectorDialogState extends State<StreamSelectorDialog> {
               isDense: true,
               border: const OutlineInputBorder(),
               labelText: 'Filter (regular expression)',
-              hintText: 'e.g. ypk  or  UU\\..*\\.HHZ',
+              hintText: 'e.g. ypk  or  UU.*HHZ',
               errorText: _filterError,
               suffixIcon: _filterController.text.isEmpty
                   ? null
@@ -476,7 +493,7 @@ class _StreamSelectorDialogState extends State<StreamSelectorDialog> {
                   key: ValueKey<String>(stream.toString()),
                   stream: stream,
                   isHighlighted: stream == _selectedHighlight,
-                  onTap: () => _highlightSelected(stream),
+                  onTap: () => _pick(_highlightSelected, stream),
                   leading: Text(
                     '${index + 1}.',
                     style: Theme.of(context).textTheme.bodySmall,
@@ -500,45 +517,42 @@ class _StreamSelectorDialogState extends State<StreamSelectorDialog> {
     final toRemove = _selectedHighlight;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: TooltipTheme(
-        data: const TooltipThemeData(waitDuration: _tooltipDelay),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Tooltip(
-              message: toAdd == null
-                  ? 'Pick a stream on the left to add it to the plot list'
-                  : 'Add $toAdd to the plot list',
-              child: ElevatedButton(
-                onPressed: toAdd == null ? null : _add,
-                child: const _MnemonicLabel(label: 'Add', mnemonicIndex: 0),
-              ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Tooltip(
+            message: toAdd == null
+                ? 'Pick a stream on the left to add it to the plot list'
+                : 'Add $toAdd to the plot list',
+            child: ElevatedButton(
+              onPressed: toAdd == null ? null : _add,
+              child: const _MnemonicLabel(label: 'Add', mnemonicIndex: 0),
             ),
-            const SizedBox(height: 12),
-            Tooltip(
-              message: toRemove == null
-                  ? 'Pick a stream on the right to remove it from the plot list'
-                  : 'Remove $toRemove from the plot list',
-              child: ElevatedButton(
-                onPressed: toRemove == null ? null : _remove,
-                child: const _MnemonicLabel(label: 'Remove', mnemonicIndex: 0),
-              ),
+          ),
+          const SizedBox(height: 12),
+          Tooltip(
+            message: toRemove == null
+                ? 'Pick a stream on the right to remove it from the plot list'
+                : 'Remove $toRemove from the plot list',
+            child: ElevatedButton(
+              onPressed: toRemove == null ? null : _remove,
+              child: const _MnemonicLabel(label: 'Remove', mnemonicIndex: 0),
             ),
-            const SizedBox(height: 32),
-            Tooltip(
-              message: _selected.isEmpty
-                  ? 'The plot list is already empty'
-                  : 'Clear all ${_selected.length} streams from the plot list',
-              child: OutlinedButton(
-                onPressed: _selected.isEmpty ? null : _removeAll,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.error,
-                ),
-                child: const Text('Remove all'),
+          ),
+          const SizedBox(height: 32),
+          Tooltip(
+            message: _selected.isEmpty
+                ? 'The plot list is already empty'
+                : 'Clear all ${_selected.length} streams from the plot list',
+            child: OutlinedButton(
+              onPressed: _selected.isEmpty ? null : _removeAll,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
               ),
+              child: const Text('Remove all'),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

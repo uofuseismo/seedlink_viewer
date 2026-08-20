@@ -7,6 +7,7 @@ import 'package:seedlink_viewer/models/stream_identifier.dart';
 import 'package:seedlink_viewer/services/profile_store.dart';
 import 'package:seedlink_viewer/services/stream_source.dart';
 import 'package:seedlink_viewer/views/connection_dialog.dart';
+import 'package:seedlink_viewer/views/plot_duration_selector.dart';
 import 'package:seedlink_viewer/views/stream_painter.dart';
 import 'package:seedlink_viewer/views/stream_selector_dialog.dart';
 import 'package:seedlink_viewer/views/welcome_view.dart';
@@ -261,6 +262,142 @@ void main() {
         contains('✓ Utah  —  localhost:18000'),
       );
       expect(platformItem(tester, 'Disconnect').onSelected, isNotNull);
+    }, variant: systemMenuBar);
+  });
+
+  group('plot options', () {
+    testWidgets('Options offers Plot... and says what it does', (tester) async {
+      await pumpApp(tester);
+      await openMenu(tester, 'Options');
+
+      expect(find.text('Plot...', findRichText: true), findsOneWidget);
+      // The label alone does not say what it will do, so this one is spelled
+      // out on hover.
+      expect(
+        tester
+            .widget<Tooltip>(
+              find
+                  .ancestor(
+                    of: find.text('Plot...', findRichText: true),
+                    matching: find.byType(Tooltip),
+                  )
+                  .first,
+            )
+            .message,
+        'Specify the plotting options.',
+      );
+    }, variant: inWindowMenuBar);
+
+    testWidgets('it is open before there is anything to plot', (tester) async {
+      await pumpApp(tester);
+      await openMenu(tester, 'Options');
+
+      // How much time a plot shows is worth setting before connecting, so
+      // unlike the stream selector this is not gated on a connection.
+      expect(isDisabled(tester, 'Plot...'), isFalse);
+    }, variant: inWindowMenuBar);
+
+    testWidgets('choosing a duration reaches the plots', (tester) async {
+      await pumpApp(
+        tester,
+        profiles: [
+          profile('Utah', streams: ['UU.ARUT.EHZ.01']),
+        ],
+        serverHas: ['UU.ARUT.EHZ.01'],
+      );
+      await openMenu(tester, 'Connection');
+      await tester.tap(find.text('Connect', findRichText: true));
+      await tester.pump();
+      await tester.tap(find.text('Utah'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        tester.widget<StreamPainter>(find.byType(StreamPainter)).timing.window,
+        const Duration(minutes: 2),
+      );
+
+      await openMenu(tester, 'Options');
+      await tester.tap(find.text('Plot...', findRichText: true));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '10 min'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Apply'));
+      await tester.pump();
+      await tester.pump();
+
+      // One value at the top drives every plot, so the trace redraws over the
+      // new window without anything else being told.
+      final painter = tester.widget<StreamPainter>(find.byType(StreamPainter));
+      expect(painter.timing.window, const Duration(minutes: 10));
+      expect(
+        painter.timing.history,
+        greaterThanOrEqualTo(const Duration(minutes: 10)),
+      );
+    }, variant: inWindowMenuBar);
+
+    testWidgets('the dropdown in the window drives the plots too', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        profiles: [
+          profile('Utah', streams: ['UU.ARUT.EHZ.01']),
+        ],
+        serverHas: ['UU.ARUT.EHZ.01'],
+      );
+      await openMenu(tester, 'Connection');
+      await tester.tap(find.text('Connect', findRichText: true));
+      await tester.pump();
+      await tester.tap(find.text('Utah'));
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.byType(PlotDurationSelector));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(MenuItemButton),
+          matching: find.text('5 min'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<StreamPainter>(find.byType(StreamPainter)).timing.window,
+        const Duration(minutes: 5),
+      );
+    }, variant: inWindowMenuBar);
+
+    testWidgets('the dialog and the dropdown never disagree', (tester) async {
+      await pumpApp(tester);
+
+      // Two ways into one setting, so each has to show what the other did.
+      await openMenu(tester, 'Options');
+      await tester.tap(find.text('Plot...', findRichText: true));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '7');
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Apply'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byType(PlotDurationSelector),
+          matching: find.text('7 min'),
+        ),
+        findsOneWidget,
+      );
+    }, variant: inWindowMenuBar);
+
+    testWidgets('the macOS item carries the same tooltip', (tester) async {
+      await pumpApp(tester);
+      // A PlatformMenuItem takes a tooltip directly rather than needing a
+      // widget wrapped around its label.
+      expect(
+        platformItem(tester, 'Plot...').tooltip,
+        'Specify the plotting options.',
+      );
     }, variant: systemMenuBar);
   });
 

@@ -74,3 +74,45 @@ class PlotTiming {
       'PlotTiming(window: $window, history: $history, '
       'redraw: $redrawInterval, slack: $clockSlack)';
 }
+
+/// The plot durations offered as one click, in minutes.
+///
+/// Short enough at the bottom to watch an event arrive, long enough at the top
+/// to see whether a station has been misbehaving. Anything between or beyond
+/// is typed instead - these are the common answers, not the only ones.
+///
+/// Shared by the dropdown in the window and the dialog under Options, which
+/// would otherwise drift into offering different sets of the same thing.
+const List<int> quickPlotDurationsInMinutes = <int>[1, 2, 5, 10, 15];
+
+/// The longest window that may be asked for, in minutes.
+///
+/// The buffer behind each plot is half as long again as the window and holds
+/// every sample, so this is really a memory limit: an hour of 200 Hz data is
+/// around 6 MB per stream before the history multiplier, and a plot list can
+/// hold dozens of streams.
+const int maximumPlotDurationInMinutes = 60;
+
+/// A window as minutes, without a trailing .0 on the common whole minute case.
+String formatPlotDurationInMinutes(Duration window) {
+  final minutes = window.inMicroseconds / Duration.microsecondsPerMinute;
+  return minutes == minutes.roundToDouble()
+      ? minutes.round().toString()
+      : minutes.toStringAsFixed(2).replaceFirst(RegExp(r'0+$'), '');
+}
+
+/// Minutes as a window, or null when the text is not one.
+///
+/// Rejects rather than clamps. A typed 90 that quietly became 60 would look
+/// like the field had ignored the keystrokes.
+Duration? parsePlotDurationInMinutes(String text) {
+  final minutes = double.tryParse(text.trim());
+  if (minutes == null ||
+      minutes <= 0 ||
+      minutes > maximumPlotDurationInMinutes) {
+    return null;
+  }
+  return Duration(
+    microseconds: (minutes * Duration.microsecondsPerMinute).round(),
+  );
+}

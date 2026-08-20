@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kLongPressTimeout;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:seedlink_viewer/main.dart' show buildAppTheme, tooltipDelay;
 import 'package:material_ui/material_ui.dart';
 import 'package:seedlink_viewer/models/stream_identifier.dart';
 import 'package:seedlink_viewer/services/stream_source.dart';
@@ -50,6 +51,8 @@ Future<void> pumpSelector(
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      // The real theme, so tooltips here wait as long as they do in the app.
+      theme: buildAppTheme(),
       home: Scaffold(
         body: StreamSelectorDialog(
           source: source ?? FakeStreamSource(_sample),
@@ -272,6 +275,31 @@ void main() {
       expect(find.text('Not a valid regular expression'), findsOneWidget);
       expect(namesUnder(tester, 'Available ('), hasLength(5));
     });
+
+    testWidgets('the suggested example can be typed without being told off', (
+      tester,
+    ) async {
+      await pumpSelector(tester);
+      final field = tester.widget<TextField>(find.byType(TextField));
+      final example = RegExp(
+        r'e\.g\..*or\s+(\S+)',
+      ).firstMatch(field.decoration!.hintText!)!.group(1)!;
+
+      // Typed a character at a time, the way a user copying the hint would.
+      // A half finished escape reports itself as a mistake, so an example
+      // containing one accuses the user of an error on the way to getting it
+      // right.
+      for (var i = 1; i <= example.length; i++) {
+        await tester.enterText(find.byType(TextField), example.substring(0, i));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Not a valid regular expression'),
+          findsNothing,
+          reason: 'typing "${example.substring(0, i)}" warned',
+        );
+      }
+      expect(namesUnder(tester, 'Available ('), isNotEmpty);
+    });
   });
 
   group('keyboard accelerators', () {
@@ -316,6 +344,65 @@ void main() {
 
       expect(namesUnder(tester, 'Selected ('), isEmpty);
       expect(find.text('UU.ARUT.EHZ.01'), findsOneWidget);
+    });
+
+    testWidgets('a and r come back after filtering and clicking a row', (
+      tester,
+    ) async {
+      await pumpSelector(tester);
+
+      // Filter, then click a result. The click is what used to leave the
+      // keyboard behind in the filter field, where a and r are swallowed so
+      // that names like ARUT stay typeable - so Add looked broken.
+      await tester.tap(find.byType(TextField));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'arut');
+      await tester.pumpAndSettle();
+      await tapStream(tester, 'UU.ARUT.EHZ.01');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.pumpAndSettle();
+
+      expect(namesUnder(tester, 'Selected ('), ['UU.ARUT.EHZ.01']);
+    });
+
+    testWidgets('r comes back after filtering and clicking a selected row', (
+      tester,
+    ) async {
+      await pumpSelector(
+        tester,
+        initialSelection: [StreamIdentifier.fromString('UU.ARUT.EHZ.01')],
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'bgu');
+      await tester.pumpAndSettle();
+      await tapStream(tester, 'UU.ARUT.EHZ.01');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await tester.pumpAndSettle();
+
+      expect(namesUnder(tester, 'Selected ('), isEmpty);
+    });
+
+    testWidgets('arrowing out of the filter still works', (tester) async {
+      await pumpSelector(tester);
+
+      // The click hands the keyboard back, but arrowing must not - typing a
+      // filter and arrowing straight down into the results is the fast path.
+      await tester.tap(find.byType(TextField));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'ypk');
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pumpAndSettle();
+
+      expect(namesUnder(tester, 'Selected ('), ['WY.YPK.HHE.01']);
     });
 
     testWidgets('alt+a adds even while the filter has focus', (tester) async {
@@ -502,12 +589,12 @@ void main() {
         tester.getCenter(find.widgetWithText(ElevatedButton, 'Add')),
       );
 
-      // Still nothing a tenth of a second in
-      await tester.pump(const Duration(milliseconds: 100));
+      // Still nothing most of the way through the delay
+      await tester.pump(tooltipDelay - const Duration(milliseconds: 50));
       expect(find.text('Add UU.ARUT.EHZ.01 to the plot list'), findsNothing);
 
-      // ... and there once the delay has elapsed
-      await tester.pump(const Duration(milliseconds: 150));
+      // ... and there once it has elapsed
+      await tester.pump(const Duration(milliseconds: 100));
       await tester.pumpAndSettle();
       expect(find.text('Add UU.ARUT.EHZ.01 to the plot list'), findsOneWidget);
     });

@@ -11,6 +11,8 @@ import './services/stream_source.dart';
 import './views/app_menu_bar.dart';
 import './views/connection_dialog.dart';
 import './views/multi_stream_painter.dart';
+import './views/plot_duration_selector.dart';
+import './views/plot_options_dialog.dart';
 import './views/stream_selector_dialog.dart';
 import './views/welcome_view.dart';
 
@@ -18,6 +20,37 @@ import './views/welcome_view.dart';
 void main() {
   setUpLogging();
   runApp(const MyApp());
+}
+
+/// How long the mouse has to sit still before a tooltip appears.
+///
+/// Tooltips default to arriving the instant the mouse lands, which nags on
+/// buttons whose job is already obvious.
+const tooltipDelay = Duration(milliseconds: 300);
+
+/// The application's look.
+///
+/// Exposed because a test that pumps a single dialog has to build the
+/// MaterialApp around it, and a dialog under a bare default theme is not the
+/// dialog the user sees.  Tooltip timing especially: it is invisible in a
+/// screenshot and only shows up in a test that waits for it.
+ThemeData buildAppTheme() {
+  final colorScheme = ColorScheme.fromSeed(seedColor: Colors.red);
+  return ThemeData(
+    colorScheme: colorScheme,
+    tooltipTheme: const TooltipThemeData(waitDuration: tooltipDelay),
+    inputDecorationTheme: InputDecorationThemeData(
+      // Material's default placeholder is onSurfaceVariant, which against
+      // entered text is only about 1.8:1 - near enough identical that a
+      // prefilled port reads as a suggestion and gets typed over, and a
+      // suggested host reads as already filled in.  outline roughly doubles
+      // the separation while staying legible in its own right.
+      //
+      // The other half of the problem is not fixable this way: entered text
+      // is already 16:1 against the field, so there is no darker to go.
+      hintStyle: TextStyle(color: colorScheme.outline),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -44,24 +77,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'SeedLink Viewer',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.red),
-      ),
+      theme: buildAppTheme(),
       home: SeedLinkViewerHome(
         profileStore: profileStore,
         serverTester: serverTester,
@@ -100,10 +116,15 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
   /// The streams to plot, top to bottom.
   var _selected = <StreamIdentifier>[];
 
-  /// Every duration the plots run on.  Owned here, at the top, so that when
-  /// the window becomes configurable there is one thing to change and the
-  /// whole stack below stays consistent with it.
-  final PlotTiming _timing = const PlotTiming();
+  /// Every duration the plots run on.  Owned here, at the top, so the plot
+  /// options dialog changes one thing and the whole stack below stays
+  /// consistent with it - the buffer behind each plot is derived from the
+  /// window, so the two can never disagree.
+  ///
+  /// Not persisted: this is a tool for having a quick look, and a window that
+  /// silently came back from last week is harder to explain than one that
+  /// starts where it always does.
+  PlotTiming _timing = const PlotTiming();
 
   /// Holds the one connection packets are read from.  One reader serves every
   /// plot: getPackets consumes packets, so a second reader on the same
@@ -364,13 +385,37 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
     }
   }
 
+  Future<void> _showPlotOptions() async {
+    final timing = await showPlotOptions(context, timing: _timing);
+    if (timing != null && mounted) {
+      // Every plot rebuilds from this, so nothing else has to be told.
+      setState(() => _timing = timing);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Align(alignment: Alignment.centerLeft, child: _buildMenuBar()),
+          Row(
+            children: [
+              _buildMenuBar(),
+              const Spacer(),
+              // The window is set here as well as under Options, the way a
+              // reader puts zoom on the toolbar and in the View menu: the menu
+              // is where the setting is found, this is where it is used.  On
+              // macOS the menu bar to the left draws nothing, so this is the
+              // only thing on the row.
+              PlotDurationSelector(
+                window: _timing.window,
+                onWindowChanged: (window) =>
+                    setState(() => _timing = _timing.withWindow(window)),
+              ),
+              const SizedBox(width: 8),
+            ],
+          ),
           Expanded(child: _buildPlots()),
         ],
       ),
@@ -387,6 +432,7 @@ class _SeedLinkViewerHomeState extends State<SeedLinkViewerHome> {
       onEdit: _editProfile,
       onDelete: _deleteProfile,
       onShowStreamSelector: _showStreamSelector,
+      onShowPlotOptions: _showPlotOptions,
       onExit: () => exit(0),
     );
   }

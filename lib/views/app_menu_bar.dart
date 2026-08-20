@@ -31,6 +31,7 @@ class AppMenuBar extends StatelessWidget {
   final void Function(ConnectionProfile) onEdit;
   final void Function(ConnectionProfile) onDelete;
   final VoidCallback onShowStreamSelector;
+  final VoidCallback onShowPlotOptions;
   final VoidCallback onExit;
 
   const AppMenuBar({
@@ -43,6 +44,7 @@ class AppMenuBar extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onShowStreamSelector,
+    required this.onShowPlotOptions,
     required this.onExit,
   });
 
@@ -169,6 +171,15 @@ class AppMenuBar extends StatelessWidget {
         shortcut: _accelerator(LogicalKeyboardKey.keyL),
       ),
     ]),
+    _Submenu('&Options', [
+      _Item(
+        '&Plot...',
+        // Deliberately not gated on a connection. How much time a plot shows
+        // is worth setting before the data arrives, not after.
+        onSelected: interactive ? onShowPlotOptions : null,
+        tooltip: 'Specify the plotting options.',
+      ),
+    ]),
   ];
 
   /// Quitting lives in File on Windows and Linux.
@@ -264,6 +275,7 @@ class AppMenuBar extends StatelessWidget {
         :final detail,
         :final checked,
         :final shortcut,
+        :final tooltip,
       ) =>
         MenuItemButton(
           onPressed: onSelected,
@@ -280,13 +292,22 @@ class AppMenuBar extends StatelessWidget {
           trailingIcon: detail == null
               ? null
               : Text(detail, style: Theme.of(context).textTheme.bodySmall),
-          // A profile name is the user's own text and carries no accelerator
-          // marker, so an unescaped '&' in it would silently eat a letter.
-          child: checked == null && detail == null
-              ? MenuAcceleratorLabel(label)
-              : Text(label),
+          // MenuItemButton has no tooltip of its own, so wrap the label. The
+          // platform menu takes one directly - see _toPlatformEntry.
+          child: _withTooltip(
+            tooltip,
+            // A profile name is the user's own text and carries no accelerator
+            // marker, so an unescaped '&' in it would silently eat a letter.
+            checked == null && detail == null
+                ? MenuAcceleratorLabel(label)
+                : Text(label),
+          ),
         ),
     };
+  }
+
+  Widget _withTooltip(String? message, Widget child) {
+    return message == null ? child : Tooltip(message: message, child: child);
   }
 
   PlatformMenu _toPlatformMenu(_Submenu menu) {
@@ -328,6 +349,7 @@ class AppMenuBar extends StatelessWidget {
       ),
       _Item() => PlatformMenuItem(
         label: _platformLabel(entry),
+        tooltip: entry.tooltip,
         // macOS renders this next to the item and matches the keystroke
         // against it, so nothing on the dart side has to.
         shortcut: entry.shortcut,
@@ -384,12 +406,17 @@ class _Item extends _Entry {
   /// show it; only the platform one acts on it by itself.
   final MenuSerializableShortcut? shortcut;
 
+  /// What the item does, spelled out on hover, for the ones whose label is not
+  /// enough on its own.
+  final String? tooltip;
+
   const _Item(
     this.label, {
     this.onSelected,
     this.detail,
     this.checked,
     this.shortcut,
+    this.tooltip,
   });
 }
 
