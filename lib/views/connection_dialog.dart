@@ -28,13 +28,22 @@ typedef FilePicker = Future<String?> Function({String? initialDirectory});
 /// Opening the chooser here puts the user on top of the key they already use
 /// rather than in their home directory looking for a hidden folder.
 String? defaultSshDirectory() {
-  final home = Platform.environment['HOME'] ??
-      Platform.environment['USERPROFILE'];
+  final ssh = sshDirectoryPath();
+  return (ssh != null && Directory(ssh).existsSync()) ? ssh : null;
+}
+
+/// Where ssh keeps its keys, whether or not that directory exists yet.
+///
+/// Spelled out in full for the hint rather than shown as ~/.ssh.  A tilde is
+/// a shell convention, and a user who copies one into a text field has typed
+/// a path to nothing - so show them the one they would have to type anyway.
+String? sshDirectoryPath() {
+  final home =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
   if (home == null || home.isEmpty) {
     return null;
   }
-  final ssh = '$home${Platform.pathSeparator}.ssh';
-  return Directory(ssh).existsSync() ? ssh : null;
+  return '$home${Platform.pathSeparator}.ssh';
 }
 
 /// The real file chooser, filtered to the things a private key looks like.
@@ -497,10 +506,10 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
                     'connecting - it is never saved.',
                 child: TextFormField(
                   controller: _privateKeyPath,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Private key',
-                    hintText: '~/.ssh/id_ed25519',
-                    border: OutlineInputBorder(),
+                    hintText: _privateKeyHint,
+                    border: const OutlineInputBorder(),
                     isDense: true,
                   ),
                   validator: (value) =>
@@ -525,6 +534,14 @@ class _ConnectionDialogState extends State<ConnectionDialog> {
         ),
       ],
     );
+  }
+
+  /// The key the user most likely wants, written out in full.
+  String get _privateKeyHint {
+    final ssh = sshDirectoryPath();
+    return ssh == null
+        ? 'path to your private key'
+        : '$ssh${Platform.pathSeparator}id_ed25519';
   }
 
   Future<void> _choosePrivateKey() async {

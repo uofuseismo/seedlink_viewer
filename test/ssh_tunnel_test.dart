@@ -164,6 +164,42 @@ void main() {
     });
   });
 
+  group('expanding a leading tilde', () {
+    final home =
+        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+    final separator = Platform.pathSeparator;
+
+    test('~/ becomes the home directory', () {
+      expect(
+        expandUserPath('~/.ssh/id_ed25519'),
+        '$home$separator.ssh/id_ed25519',
+      );
+    });
+
+    test('a bare ~ is the home directory', () {
+      expect(expandUserPath('~'), home);
+    });
+
+    test('an absolute path is left alone', () {
+      expect(expandUserPath('/etc/ssl/certs'), '/etc/ssl/certs');
+    });
+
+    test('a relative path is left alone', () {
+      expect(expandUserPath('keys/id_rsa'), 'keys/id_rsa');
+    });
+
+    test('a tilde in the middle is not a home directory', () {
+      expect(expandUserPath('/var/backup~/id_rsa'), '/var/backup~/id_rsa');
+    });
+
+    test("someone else's home is left alone rather than guessed at", () {
+      // Resolving ~other means asking the system who they are, and guessing
+      // wrong points at a key that is not theirs.
+      expect(expandUserPath('~someoneelse/.ssh/id_rsa'),
+          '~someoneelse/.ssh/id_rsa');
+    });
+  });
+
   group('reading a private key', () {
     late Directory directory;
 
@@ -234,6 +270,30 @@ void main() {
         }) async => null),
         throwsA(isA<SshTunnelCancelled>()),
       );
+    });
+
+    test('a tilde path finds the key, not a directory called ~', () async {
+      // Exactly what the macOS tester hit: the hint said ~/.ssh/id_ed25519,
+      // they typed it, and dart looked for a directory literally named "~".
+      final home =
+          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+      if (home == null || home.isEmpty) {
+        return; // Nothing to expand to on this machine.
+      }
+      // A real key under a real home directory, reached the way a user would
+      // write it.  Anywhere else and the tilde would not be exercised.
+      final inHome = Directory(home).createTempSync('seedlink_key_test');
+      addTearDown(() => inHome.deleteSync(recursive: true));
+      File('${inHome.path}/id_ed25519').writeAsStringSync(_plainKey);
+
+      final tildePath = '~/${inHome.path.split(Platform.pathSeparator).last}'
+          '/id_ed25519';
+      final pairs = await loadPrivateKey(tildePath, ({
+        required keyPath,
+        required retry,
+      }) async => null);
+
+      expect(pairs, isNotEmpty);
     });
 
     test('a key that is not there says so, and says which', () async {

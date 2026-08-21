@@ -60,6 +60,30 @@ class SshTunnelCancelled implements Exception {
   String toString() => 'Cancelled';
 }
 
+/// A path with a leading ~ turned into a real one.
+///
+/// The shell expands ~ before a program ever sees it, so a path typed into a
+/// text field still has one - and dart's File takes it literally and looks for
+/// a directory actually called "~".  A user copying ~/.ssh/id_ed25519 out of
+/// the hint, or off any set of instructions ever written about ssh, would be
+/// told the key does not exist.
+///
+/// Only a bare leading ~ is expanded.  ~someone-else is left alone: resolving
+/// another user's home means asking the system who they are, and guessing
+/// wrong would point at a key that is not theirs.
+String expandUserPath(String path) {
+  if (path != '~' && !path.startsWith('~/') && !path.startsWith(r'~\')) {
+    return path;
+  }
+  final home =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+  if (home == null || home.isEmpty) {
+    return path;
+  }
+  final rest = path.length > 2 ? path.substring(2) : '';
+  return rest.isEmpty ? home : '$home${Platform.pathSeparator}$rest';
+}
+
 /// Reads a private key, asking for a passphrase only if it turns out to need
 /// one.
 ///
@@ -71,9 +95,12 @@ Future<List<SSHKeyPair>> loadPrivateKey(
   PassphrasePrompt onPassphrase,
 ) async {
   final String pem;
+  final resolved = expandUserPath(path);
   try {
-    pem = await File(path).readAsString();
+    pem = await File(resolved).readAsString();
   } on FileSystemException catch (e) {
+    // Reported as the user wrote it rather than as expanded, so the message
+    // matches what is on screen for them to correct.
     throw SshTunnelException('Could not read the private key $path: '
         '${e.osError?.message ?? e.message}');
   }
