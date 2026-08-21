@@ -126,13 +126,13 @@ flutter:
 # assets: nothing here is bundled into the app at runtime.
 flutter_launcher_icons:
   image_path: "appIcon/slv_icon_1024.png"
-  android: true
-  # iOS refuses an icon with an alpha channel, and applies its own rounding.
-  ios: true
-  remove_alpha_ios: true
-  adaptive_icon_background: "appIcon/slv_icon_adaptive_background.png"
-  adaptive_icon_foreground: "appIcon/slv_icon_adaptive_foreground.png"
-  adaptive_icon_monochrome: "appIcon/slv_icon_monochrome.png"
+  # Desktop only.  A stack of traces sized to a window, a menu bar and a
+  # two-list picker do not become a phone app by shrinking.
+  #
+  # These must say false rather than be left out: the package asks
+  # `android != false`, so an absent key reads as yes.
+  android: false
+  ios: false
   macos:
     generate: true
     image_path: "appIcon/slv_icon_1024.png"
