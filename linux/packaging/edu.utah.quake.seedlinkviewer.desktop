@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=SeedLink Viewer
+GenericName=Seismic Waveform Viewer
+Comment=Plot live seismic waveforms from a SEEDLink server
+# Rewritten by install.sh to wherever the bundle actually landed.
+Exec=/opt/seedlink-viewer/seedlink_viewer
+# Resolved from the icon theme, so it must match the PNGs installed under
+# share/icons/hicolor/*/apps/ and the id in linux/CMakeLists.txt.
+Icon=edu.utah.quake.seedlinkviewer
+Terminal=false
+Categories=Science;Geoscience;
+Keywords=seismic;seismology;waveform;seedlink;earthquake;
+StartupNotify=true
+StartupWMClass=edu.utah.quake.seedlinkviewer

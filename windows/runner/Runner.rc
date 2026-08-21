@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "seedlink_viewer" "\0"
+            VALUE "CompanyName", "University of Utah Seismograph Stations" "\0"
+            VALUE "FileDescription", "SeedLink Viewer" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "seedlink_viewer" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 University of Utah Seismograph Stations. All rights reserved." "\0"
             VALUE "OriginalFilename", "seedlink_viewer.exe" "\0"
-            VALUE "ProductName", "seedlink_viewer" "\0"
+            VALUE "ProductName", "SeedLink Viewer" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
